@@ -1,0 +1,10 @@
+# Virtual environment
+venv/
+
+# Python package metadata
+*.egg-info/
+
+# Common Python noise worth adding while you're at it
+__pycache__/
+*.pyc
+.DS_Store        # Mac folder metadata

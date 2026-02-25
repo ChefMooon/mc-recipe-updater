@@ -1,0 +1,86 @@
+# MC-Recipe-Updater Development Guidelines
+
+## Code Style & Comments
+
+### Module Docstrings
+- Place triple-quoted docstring at the top of each file
+- Include: module purpose, what it does, and key implementation details
+- Use bullet points for clarity when explaining functionality
+- Example:
+  ```python
+  """
+  ConfigManager - Handles loading, saving, and managing sync profiles.
+  
+  Profiles are stored in a JSON file at:
+    ~/.foldersyncer/profiles.json
+  
+  Each profile looks like:
+  {
+      "name": "myproject",
+      "source": "/path/to/source",
+      ...
+  }
+  """
+  ```
+
+### Section Dividers
+- Use Unicode box-drawing characters for section headers:
+  ```python
+  # ──────────────────────────────────────────────
+  # Section Name
+  # ──────────────────────────────────────────────
+  ```
+- Helps organize large classes or multiple related functions
+- Improves readability when jumping through files
+
+### Function & Method Docstrings
+- Use triple quotes for all public functions/methods
+- Keep to one line for simple functions
+- Include examples for complex commands
+- Example:
+  ```python
+  def add_profile(self, name: str, source: str, target: str, parsers: list):
+      """Add or update a sync profile with the given parameters."""
+  ```
+
+### Inline Comments
+- Use sparingly—only when logic is non-obvious
+- Explain *why*, not *what* the code does
+- Use `# Allow one-off overrides without changing the saved profile` rather than `# Set the config source`
+
+---
+
+## Documentation Updates
+
+**CRITICAL:** When you modify code, update related documentation:
+
+1. **Function Changes**
+   - Update docstring if signature changes
+   - Update docstring if behavior changes
+   - Update docstring if new parameters are added
+
+2. **New Features**
+   - Add module docstring if creating a new file
+   - Add docstring to all new functions/methods
+   - Add section divider for grouping if needed
+
+3. **CLI Commands**
+   - Update docstring in the command function
+   - Update README.md with new command syntax
+   - Update docstring examples to match actual tool name (`mcru`, not `foldersyncer`)
+
+4. **Parser/Registry Changes**
+   - Update parser docstrings in `registry.py`
+   - Update module docstring to list all available parsers
+
+5. **README.md**
+   - Update example commands if behavior changes
+   - Update description sections for modified features
+   - Keep tool name consistent: `mc-recipe-updater` (package), `mcru` (command)
+
+---
+
+## Tool Names
+- **Package name**: `mc-recipe-updater`
+- **CLI command**: `mcru`
+- Never use old name `foldersyncer` in new code or docs
