@@ -3,22 +3,26 @@
 mcru - A CLI tool to compare and sync folders using saved config profiles.
 
 Usage:
-    mcru run <profile>           # Run a saved profile
-    mcru add <name> <src> <tgt>  # Save a new profile
-    mcru list                    # List all saved profiles
-    mcru remove <name>           # Remove a profile
-    mcru run <profile> --dry-run # Preview without making changes
-    mcru config show             # Show the config directory path and file locations
-    mcru config open             # Open the config directory in the file explorer
+    mcru run <profile>            # Run a saved profile or suite
+    mcru add <name> <src> <tgt>   # Save a new profile
+    mcru list                     # List all saved profiles
+    mcru remove <name>            # Remove a profile
+    mcru run <profile> --dry-run  # Preview without making changes
+    mcru suite add <name>         # Create a new suite
+    mcru suite add-profile <suite> <profile>  # Add a profile to a suite
+    mcru suite run <suite>        # Run all profiles in a suite
+    mcru config show              # Show the config directory path and file locations
+    mcru config open              # Open the config directory in the file explorer
 """
 
+import json
 import click
 import subprocess
 import sys
 import shutil
-from config import ConfigManager, CONFIG_DIR, CONFIG_FILE, DEFAULT_MAPPING_FILE, BUNDLED_MAPPING_FILE
+from config import ConfigManager, CONFIG_DIR, CONFIG_FILE, SUITES_FILE, DEFAULT_MAPPING_FILE, BUNDLED_MAPPING_FILE
 from syncer import FolderSyncer
-from reporter import Reporter, REPORTS_DIR
+from reporter import Reporter, SuiteReporter, REPORTS_DIR
 
 
 @click.group()
@@ -42,6 +46,7 @@ def config_show():
     """Show the config directory path and file locations."""
     click.echo(f"\n📁  Config directory : {CONFIG_DIR}")
     click.echo(f"    profiles.json    : {CONFIG_FILE}")
+    click.echo(f"    suites.json      : {SUITES_FILE}")
     click.echo(f"    mapping-presets  : {DEFAULT_MAPPING_FILE}")
     click.echo(f"    reports/         : {REPORTS_DIR}\n")
 
@@ -92,13 +97,15 @@ def config_reset():
     
     # Recreate and seed
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text("{\"profiles\": []}")
+    CONFIG_FILE.write_text(json.dumps({"profiles": []}, indent=2))
     click.echo(f"✅  Created fresh: {CONFIG_FILE}")
-    
+    SUITES_FILE.write_text(json.dumps({"suites": []}, indent=2))
+    click.echo(f"✅  Created fresh: {SUITES_FILE}")
+
     if BUNDLED_MAPPING_FILE.exists():
         shutil.copy2(BUNDLED_MAPPING_FILE, DEFAULT_MAPPING_FILE)
         click.echo(f"✅  Seeded: {DEFAULT_MAPPING_FILE}")
-    
+
     click.echo("✅  Config reset complete.")
 
 
@@ -180,19 +187,83 @@ def update(name, source, target, parser, description, mapping):
 @click.argument("profile")
 @click.option("--dry-run", is_flag=True, help="Preview changes without applying them.")
 @click.option("--no-report", is_flag=True, help="Skip saving the report file.")
-@click.option("--source", default=None, help="Override the source folder for this run.")
-@click.option("--target", default=None, help="Override the target folder for this run.")
-@click.option("--mapping", default=None, help="Mapping preset name. Overrides profile mapping if set.")
+@click.option("--source", default=None, help="Override the source folder for this run (applies to every profile in a suite).")
+@click.option("--target", default=None, help="Override the target folder for this run (applies to every profile in a suite).")
+@click.option("--mapping", default=None, help="Mapping preset name. Overrides profile/suite mapping if set.")
 def run(profile, dry_run, no_report, source, target, mapping):
-    """Run a sync job using a saved profile.\n
+    """Run a sync job using a saved profile or suite.\n
+    If the name matches a suite, all profiles in the suite are run in order
+    and a single combined report is produced.\n
     Example: mcru run myproject --dry-run
     """
     cm = ConfigManager()
     config = cm.get_profile(profile)
 
+    # ── Suite run ──────────────────────────────────────────────
     if config is None:
-        click.echo(f"❌  Profile '{profile}' not found. Run 'list' to see available profiles.")
+        suite = cm.get_suite(profile)
+        if suite is None:
+            click.echo(f"❌  '{profile}' not found. "
+                       "Run 'list' to see profiles or 'suite list' for suites.")
+            return
+
+        mode_label = "DRY RUN" if dry_run else "LIVE"
+        click.echo(f"\n🗂️  Running suite  : {profile}")
+        click.echo(f"    Profiles      : {len(suite['profiles'])}")
+        click.echo(f"    Mode          : {mode_label}\n")
+
+        if not suite["profiles"]:
+            click.echo("⚠️  Suite has no profiles. Add some with 'mcru suite add-profile'.")
+            return
+
+        runs = []
+        for pname in suite["profiles"]:
+            pcfg = cm.get_profile(pname)
+            if pcfg is None:
+                click.echo(f"  ⚠️  Profile '{pname}' not found — skipping.")
+                continue
+
+            if source:
+                pcfg["source"] = source
+            if target:
+                pcfg["target"] = target
+
+            active_mapping = mapping or pcfg.get("mapping_preset")
+            if active_mapping:
+                try:
+                    pcfg["mapping"] = cm.get_mapping_preset(active_mapping)
+                except (FileNotFoundError, ValueError) as err:
+                    click.echo(f"  ⚠️  Profile '{pname}' mapping error: {err} — skipping.")
+                    continue
+                pcfg["mapping_preset"] = active_mapping
+
+            click.echo(f"  ▶  {pname}")
+            click.echo(f"     Source : {pcfg['source']}")
+            click.echo(f"     Target : {pcfg['target']}")
+            if pcfg.get("mapping_preset"):
+                click.echo(f"     Mapping: {pcfg['mapping_preset']}")
+
+            syncer = FolderSyncer(pcfg, dry_run=dry_run)
+            try:
+                results = syncer.run()
+            except ValueError as err:
+                click.echo(f"  ❌  {pname}: {err} — skipping.")
+                continue
+            runs.append((pname, pcfg, results))
+
+        if not runs:
+            click.echo("\n❌  No profiles ran successfully.")
+            return
+
+        suite_reporter = SuiteReporter(profile, runs, dry_run=dry_run)
+        suite_reporter.print_summary()
+
+        if not no_report:
+            report_path = suite_reporter.save_report()
+            click.echo(f"\n📄  Suite report saved to: {report_path}")
         return
+
+    # ── Single profile run ─────────────────────────────────────────
 
     # Allow one-off overrides without changing the saved profile
     if source:
@@ -234,6 +305,148 @@ def run(profile, dry_run, no_report, source, target, mapping):
     if not no_report:
         report_path = reporter.save_report()
         click.echo(f"\n📄  Report saved to: {report_path}")
+
+
+# ──────────────────────────────────────────────
+# Suite Management
+# ──────────────────────────────────────────────
+
+@cli.group()
+def suite():
+    """Create and manage suites (ordered groups of profiles run together)."""
+    pass
+
+
+@suite.command("add")
+@click.argument("name")
+@click.option("--description", "-d", default="", help="Optional description for the suite.")
+def suite_add(name, description):
+    """Create a new empty suite.\n
+    Example: mcru suite add full-sync -d "Sync all mods"
+    """
+    cm = ConfigManager()
+    if cm.get_suite(name):
+        click.echo(f"⚠️  Suite '{name}' already exists. Use 'suite remove' then 'suite add' to recreate it.")
+        return
+    cm.save_suite(name, description=description)
+    click.echo(f"✅  Suite '{name}' created.")
+
+
+@suite.command("remove")
+@click.argument("name")
+def suite_remove(name):
+    """Delete a suite. The profiles within it are not affected."""
+    cm = ConfigManager()
+    try:
+        cm.delete_suite(name)
+    except ValueError as err:
+        click.echo(f"❌  {err}")
+        return
+    click.echo(f"🗑️  Suite '{name}' removed.")
+
+
+@suite.command("list")
+def suite_list():
+    """List all saved suites."""
+    cm = ConfigManager()
+    suites = cm.list_suites()
+    if not suites:
+        click.echo("No suites saved yet. Use 'mcru suite add <name>' to create one.")
+        return
+    click.echo(f"\n{'NAME':<20} {'PROFILES':<10} DESCRIPTION")
+    click.echo("─" * 60)
+    for s in suites:
+        desc = s.get("description") or "—"
+        click.echo(f"{s['name']:<20} {len(s.get('profiles', [])):<10} {desc}")
+    click.echo()
+
+
+@suite.command("show")
+@click.argument("name")
+def suite_show(name):
+    """Show the ordered profile list for a suite."""
+    cm = ConfigManager()
+    s = cm.get_suite(name)
+    if s is None:
+        click.echo(f"❌  Suite '{name}' not found.")
+        return
+    profiles = s.get("profiles", [])
+    click.echo(f"\nSuite : {s['name']}")
+    if s.get("description"):
+        click.echo(f"Desc  : {s['description']}")
+    click.echo("─" * 40)
+    if not profiles:
+        click.echo("  (no profiles — add some with 'mcru suite add-profile')")
+    else:
+        for i, pname in enumerate(profiles, 1):
+            flag = "" if cm.get_profile(pname) else "  ⚠️  (profile not found)"
+            click.echo(f"  {i:>3}. {pname}{flag}")
+    click.echo()
+
+
+@suite.command("update")
+@click.argument("name")
+@click.option("--description", "-d", required=True, help="New description for the suite.")
+def suite_update(name, description):
+    """Update a suite's description.\n
+    Example: mcru suite update full-sync -d "New description"
+    """
+    cm = ConfigManager()
+    try:
+        cm.update_suite_description(name, description)
+    except ValueError as err:
+        click.echo(f"\u274c  {err}")
+        return
+    click.echo(f"\u2705  Suite '{name}' description updated.")
+
+
+@suite.command("add-profile")
+@click.argument("suite_name")
+@click.argument("profile_name")
+def suite_add_profile(suite_name, profile_name):
+    """Append a profile to a suite.\n
+    Example: mcru suite add-profile full-sync mod-a
+    """
+    cm = ConfigManager()
+    try:
+        cm.add_profile_to_suite(suite_name, profile_name)
+    except ValueError as err:
+        click.echo(f"❌  {err}")
+        return
+    click.echo(f"✅  Profile '{profile_name}' added to suite '{suite_name}'.")
+
+
+@suite.command("remove-profile")
+@click.argument("suite_name")
+@click.argument("profile_name")
+def suite_remove_profile(suite_name, profile_name):
+    """Remove a profile from a suite. The profile itself is not deleted.\n
+    Example: mcru suite remove-profile full-sync mod-a
+    """
+    cm = ConfigManager()
+    try:
+        cm.remove_profile_from_suite(suite_name, profile_name)
+    except ValueError as err:
+        click.echo(f"❌  {err}")
+        return
+    click.echo(f"🗑️  Profile '{profile_name}' removed from suite '{suite_name}'.")
+
+
+@suite.command("reorder")
+@click.argument("suite_name")
+@click.argument("profile_name")
+@click.argument("position", type=int)
+def suite_reorder(suite_name, profile_name, position):
+    """Move a profile to a specific position in a suite (1-based).\n
+    Example: mcru suite reorder full-sync mod-a 1
+    """
+    cm = ConfigManager()
+    try:
+        cm.reorder_profile_in_suite(suite_name, profile_name, position)
+    except ValueError as err:
+        click.echo(f"❌  {err}")
+        return
+    click.echo(f"✅  '{profile_name}' moved to position {position} in suite '{suite_name}'.")
 
 
 # ──────────────────────────────────────────────

@@ -5,6 +5,8 @@ Compares source vs target using MD5 hashing, then applies changes:
   - Add files that exist in source but not target
   - Remove files that exist in target but not source
   - Update files where the content differs (source is authoritative)
+  - Create empty directories that exist in source but not target
+  - Remove empty orphan directories in target that don't exist in source
 
 Supports optional parsers that transform file content before hashing,
 so whitespace or encoding differences don't create false positives.
@@ -92,11 +94,59 @@ class FolderSyncer:
             except Exception as e:
                 errors.append((rel_path, str(e)))
 
+        # ── Directory sync ───────────────────────────────────────────
+        dirs_added = []
+        dirs_removed = []
+
+        source_dirs = self._scan_all_dirs(self.source)
+
+        # Create source directories missing from target (sorted: parents before children)
+        for rel_dir in sorted(source_dirs):
+            target_dir_path = self.target / rel_dir
+            if not target_dir_path.exists():
+                try:
+                    if not self.dry_run:
+                        target_dir_path.mkdir(parents=True, exist_ok=True)
+                    dirs_added.append(rel_dir)
+                except Exception as e:
+                    errors.append((rel_dir + "/", str(e)))
+
+        # Remove orphan target dirs not in source
+        # In live mode: only remove if actually empty (deepest first so children go first)
+        # In dry-run mode: flag dirs that are currently empty or would be empty after file removals
+        to_remove_set = set(to_remove)
+        target_dirs = sorted(self._scan_all_dirs(self.target), reverse=True)  # deepest first
+
+        for rel_dir in target_dirs:
+            if rel_dir in source_dirs:
+                continue
+            target_dir_path = self.target / rel_dir
+            if not target_dir_path.exists():
+                continue
+            if self.dry_run:
+                # A dir would be removable if all files inside it are scheduled for removal
+                files_inside = [
+                    item.relative_to(self.target).as_posix()
+                    for item in target_dir_path.rglob("*") if item.is_file()
+                ]
+                if not files_inside or all(f in to_remove_set for f in files_inside):
+                    dirs_removed.append(rel_dir)
+            else:
+                # Only remove if the dir is now empty (children removed first due to reverse sort)
+                if not any(target_dir_path.iterdir()):
+                    try:
+                        target_dir_path.rmdir()
+                        dirs_removed.append(rel_dir)
+                    except Exception as e:
+                        errors.append((rel_dir + "/", str(e)))
+
         return {
             "added": applied_add,
             "updated": applied_update,
             "removed": applied_remove,
             "unchanged": unchanged,
+            "dirs_added": dirs_added,
+            "dirs_removed": dirs_removed,
             "errors": errors,
         }
 
@@ -161,6 +211,8 @@ class FolderSyncer:
             "updated": applied_update,
             "removed": applied_remove,
             "unchanged": unchanged,
+            "dirs_added": [],
+            "dirs_removed": [],
             "errors": errors,
         }
 
@@ -177,6 +229,16 @@ class FolderSyncer:
             if f.is_file():
                 rel = f.relative_to(folder).as_posix()
                 result[rel] = f.stat()
+        return result
+
+    def _scan_all_dirs(self, folder: Path) -> set:
+        """Return a set of relative dir path strings for all directories under folder."""
+        result = set()
+        if not folder.exists():
+            return result
+        for d in folder.rglob("*"):
+            if d.is_dir():
+                result.add(d.relative_to(folder).as_posix())
         return result
 
     def _copy(self, source_path: Path, target_path: Path):

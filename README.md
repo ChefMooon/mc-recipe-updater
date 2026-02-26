@@ -62,6 +62,10 @@ mcru run myproject
 mcru run myproject --dry-run
 mcru run myproject --target /other/path
 mcru run myproject --mapping mc-arch
+
+# Also accepts a suite name — runs all profiles in the suite in order
+mcru run full-sync
+mcru run full-sync --dry-run
 ```
 
 ### `list` — Show all saved profiles
@@ -97,9 +101,81 @@ mcru config open
 # Reset mapping presets to package defaults
 mcru config reset-presets
 
-# Reset ALL configs (profiles, presets, reports) to a clean slate
+# Reset ALL configs (profiles, suites, presets, reports) to a clean slate
 mcru config reset
 ```
+
+---
+
+## Suites
+
+A **suite** is an ordered list of profiles that run together as a single job.
+All profiles execute in sequence and produce one combined report.
+
+```bash
+# Create a suite
+mcru suite add full-sync -d "Sync all mods"
+
+# Add profiles to it (in order)
+mcru suite add-profile full-sync mod-a
+mcru suite add-profile full-sync mod-b
+mcru suite add-profile full-sync mod-c
+
+# Run it (same command as a profile)
+mcru run full-sync
+mcru run full-sync --dry-run
+```
+
+### `suite add` — Create a suite
+```bash
+mcru suite add <name> [-d description]
+```
+
+### `suite remove` — Delete a suite
+```bash
+mcru suite remove <name>
+# The profiles inside it are not affected
+```
+
+### `suite update` — Update a suite's description
+```bash
+mcru suite update <name> -d "New description"
+```
+
+### `suite list` — Show all suites
+```bash
+mcru suite list
+```
+
+### `suite show` — Show a suite’s ordered profile list
+```bash
+mcru suite show full-sync
+```
+
+### `suite add-profile` — Append a profile to a suite
+```bash
+mcru suite add-profile <suite> <profile>
+```
+
+### `suite remove-profile` — Remove a profile from a suite
+```bash
+mcru suite remove-profile <suite> <profile>
+# The profile itself is not deleted
+```
+
+### `suite reorder` — Move a profile to a specific position
+```bash
+mcru suite reorder <suite> <profile> <position>
+
+# Example: move mod-c to run first
+mcru suite reorder full-sync mod-c 1
+```
+
+### Suite reports
+
+When a suite finishes, a single combined `.txt` report is saved to `~/.mcru/reports/`.
+The file contains one section per profile followed by a **SUITE TOTALS** block summing
+added / updated / removed / unchanged / error counts across all profiles.
 
 ---
 
@@ -229,6 +305,7 @@ All user data lives under `~/.mcru/`, created automatically on first run.
 | Path | Contents |
 |------|----------|
 | `~/.mcru/profiles.json` | All saved profiles |
+| `~/.mcru/suites.json` | All saved suites |
 | `~/.mcru/mapping-presets.json` | Mapping presets (seeded from package defaults) |
 | `~/.mcru/reports/` | Timestamped report files |
 
