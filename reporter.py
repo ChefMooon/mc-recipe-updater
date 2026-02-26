@@ -2,14 +2,14 @@
 Reporter - Formats and saves sync job results.
 
 Prints a colour-coded summary to the terminal and saves
-a timestamped .txt report to ~/.foldersyncer/reports/
+a timestamped .txt report to ~/.mcru/reports/
 """
 
 import click
 from datetime import datetime
 from pathlib import Path
 
-REPORTS_DIR = Path.home() / ".foldersyncer" / "reports"
+REPORTS_DIR = Path.home() / ".mcru" / "reports"
 
 
 class Reporter:
@@ -73,7 +73,7 @@ class Reporter:
             return [f"  {prefix} {f}" for f in items] if items else ["  (none)"]
 
         lines = [
-            "FolderSyncer Report",
+            "mcru Report",
             "=" * 60,
             f"Profile  : {self.profile_name}",
             f"Date     : {self.timestamp.isoformat(timespec='seconds')}",
@@ -81,6 +81,7 @@ class Reporter:
             f"Source   : {self.config['source']}",
             f"Target   : {self.config['target']}",
             f"Parsers  : {', '.join(self.config.get('parsers', [])) or 'none'}",
+            f"Mapping  : {self.config.get('mapping_preset') or 'none'}",
             "=" * 60,
             "",
             f"Added ({len(r['added'])}):",

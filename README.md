@@ -40,9 +40,11 @@ mcru add <name> <source> <target> [options]
 # Options:
 #   -p, --parser  Apply a parser (can be used multiple times)
 #   -d, --desc    Description
+#   --mapping     Optional mapping preset name
 
 mcru add website ./src /var/www/html --parser normalize_line_endings
 mcru add configs ~/dotfiles ~/.config --parser strip_bom
+mcru add recipes ./my-mod ./target-pack --mapping mc-arch
 ```
 
 ### `run` — Run a sync job
@@ -54,10 +56,12 @@ mcru run <name> [options]
 #   --no-report   Skip saving the report file
 #   --source      Override source for this run only
 #   --target      Override target for this run only
+#   --mapping     Override mapping preset for this run only
 
 mcru run myproject
 mcru run myproject --dry-run
 mcru run myproject --target /other/path
+mcru run myproject --mapping mc-arch
 ```
 
 ### `list` — Show all saved profiles
@@ -73,11 +77,80 @@ mcru remove myproject
 ### `update` — Edit an existing profile
 ```bash
 mcru update myproject ./new-src ./new-dist
+mcru update myproject ./new-src ./new-dist --mapping mc-arch
 ```
 
 ### `quick` — One-off run, no profile needed
 ```bash
 mcru quick ./src ./dist --dry-run
+mcru quick ./my-mod ./target-pack --mapping mc-arch
+```
+
+---
+
+## Mapping mode
+
+- No mapping set (on CLI or profile): normal workflow, all files are matched by relative path.
+- Mapping set: source files are categorized and copied into mapped target folders.
+
+### Resolution order
+
+1. `--mapping` on `run`/`quick` (highest priority)
+2. profile `mapping_preset` (saved by `add`/`update`)
+3. no mapping (default behavior)
+
+### Mapping file
+
+Mappings are read from `~/.mcru/mapping-presets.json`.
+This file is automatically seeded from the package defaults on first run.
+You can freely edit it to add or modify presets — upgrades will not overwrite your changes.
+
+```json
+{
+  "version": 1,
+  "presets": {
+    "mc-arch": {
+      "description": "Map multi-platform Minecraft recipe sources into core/fabric/forge target folders.",
+      "source_roots": {
+        "common": ["common/src/generated/data/*/recipes"],
+        "fabric": ["fabric/src/main/resources/data/*/recipes"],
+        "forge_like": {
+          "candidates": [
+            "forge/src/main/resources/data/*/recipes",
+            "neoforge/src/main/resources/data/*/recipes"
+          ]
+        }
+      },
+      "target_roots": {
+        "common": "core",
+        "fabric": "fabric",
+        "forge_like": "forge"
+      },
+      "category_map": {
+        "common": "common",
+        "fabric": "fabric",
+        "forge_like": "forge_like"
+      },
+      "omit_globs": [],
+      "rules": {
+        "forge_like_conflict": "error_if_multiple",
+        "delete_mode": "global_target"
+      }
+    }
+  }
+}
+```
+
+### Omit source folders/files
+
+Use `omit_globs` to skip matching paths or path segments from source.
+
+```json
+"omit_globs": [
+  "**/minecraft/**",
+  "*_backup",
+  "temp"
+]
 ```
 
 ---
@@ -91,16 +164,17 @@ Parsers transform file **content before hashing**, so minor differences
 |--------------------------|-------------------------------------------|
 | `strip_bom`              | Removes UTF-8 BOM from file start         |
 | `normalize_line_endings` | Converts CRLF / CR → LF                   |
-| `strip_trailing_whitespace` | Strips trailing spaces from each line  |
+| `lowercase_names`        | Lowercases file content before hashing    |
 
 Use multiple:
 ```bash
-foldersyncer add myproject ./src ./dist \
+mcru add myproject ./src ./dist \
   --parser strip_bom \
   --parser normalize_line_endings
 ```
 
-To add a custom parser, open `parsers/registry.py` and add your function.
+To add a custom parser, open `registry.py` and add your function.
+To add a mapping preset, edit `~/.mcru/mapping-presets.json`.
 
 ---
 
@@ -135,10 +209,16 @@ Now you can run `mcru` from anywhere, and changes to the source code will be ref
 
 ## Where data is stored
 
+All user data lives under `~/.mcru/`, created automatically on first run.
+
 | Path | Contents |
 |------|----------|
-| `~/.foldersyncer/profiles.json` | All saved profiles |
-| `~/.foldersyncer/reports/` | Timestamped report files |
+| `~/.mcru/profiles.json` | All saved profiles |
+| `~/.mcru/mapping-presets.json` | Mapping presets (seeded from package defaults) |
+| `~/.mcru/reports/` | Timestamped report files |
+
+> **Note:** `mapping-presets.json` is copied from the package defaults the first time you run `mcru`.
+> Upgrades will never overwrite your local copy. To reset to defaults, delete the file and run any `mcru` command.
 
 ---
 
@@ -146,6 +226,6 @@ Now you can run `mcru` from anywhere, and changes to the source code will be ref
 
 ```bash
 pip install pyinstaller
-pyinstaller --onefile cli.py --name foldersyncer
-# Output: dist/foldersyncer  ← single binary, no Python needed
+pyinstaller --onefile cli.py --name mcru
+# Output: dist/mcru  ← single binary, no Python needed
 ```

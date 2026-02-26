@@ -1,5 +1,5 @@
 """
-FolderSyncer - Core diff and sync engine.
+Syncer - Core diff and sync engine.
 
 Compares source vs target using MD5 hashing, then applies changes:
   - Add files that exist in source but not target
@@ -11,7 +11,7 @@ so whitespace or encoding differences don't create false positives.
 """
 
 import hashlib
-import os
+import fnmatch
 import shutil
 from pathlib import Path
 from registry import get_parser
@@ -22,6 +22,7 @@ class FolderSyncer:
         self.source = Path(config["source"])
         self.target = Path(config["target"])
         self.parsers = config.get("parsers", [])
+        self.mapping = config.get("mapping")
         self.dry_run = dry_run
 
         if not self.source.exists():
@@ -29,6 +30,13 @@ class FolderSyncer:
 
     def run(self) -> dict:
         """Run the full compare + sync pipeline. Returns a results dict."""
+        if self.mapping:
+            return self._run_with_mapping()
+
+        return self._run_default()
+
+    def _run_default(self) -> dict:
+        """Run legacy sync behavior with direct source/target path mirroring."""
         source_files = self._scan(self.source)
         target_files = self._scan(self.target)
 
@@ -63,9 +71,7 @@ class FolderSyncer:
         for rel_path in to_add:
             try:
                 if not self.dry_run:
-                    dest = self.target / rel_path
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(self.source / rel_path, dest)
+                    self._copy(self.source / rel_path, self.target / rel_path)
                 applied_add.append(rel_path)
             except Exception as e:
                 errors.append((rel_path, str(e)))
@@ -73,9 +79,7 @@ class FolderSyncer:
         for rel_path in to_update:
             try:
                 if not self.dry_run:
-                    dest = self.target / rel_path
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(self.source / rel_path, dest)
+                    self._copy(self.source / rel_path, self.target / rel_path)
                 applied_update.append(rel_path)
             except Exception as e:
                 errors.append((rel_path, str(e)))
@@ -96,6 +100,70 @@ class FolderSyncer:
             "errors": errors,
         }
 
+    def _run_with_mapping(self) -> dict:
+        """Run sync behavior based on source->target mapping categories."""
+        source_to_target = self._build_source_target_map()
+        target_files = self._scan(self.target)
+
+        to_add = []
+        to_update = []
+        to_remove = []
+        unchanged = []
+
+        for target_rel, source_rel in source_to_target.items():
+            if target_rel not in target_files:
+                to_add.append(target_rel)
+            else:
+                src_hash = self._hash_file(self.source / source_rel)
+                tgt_hash = self._hash_file(self.target / target_rel)
+                if src_hash != tgt_hash:
+                    to_update.append(target_rel)
+                else:
+                    unchanged.append(target_rel)
+
+        for rel_path in target_files:
+            if rel_path not in source_to_target:
+                to_remove.append(rel_path)
+
+        applied_add = []
+        applied_update = []
+        applied_remove = []
+        errors = []
+
+        for target_rel in to_add:
+            try:
+                if not self.dry_run:
+                    source_rel = source_to_target[target_rel]
+                    self._copy(self.source / source_rel, self.target / target_rel)
+                applied_add.append(target_rel)
+            except Exception as e:
+                errors.append((target_rel, str(e)))
+
+        for target_rel in to_update:
+            try:
+                if not self.dry_run:
+                    source_rel = source_to_target[target_rel]
+                    self._copy(self.source / source_rel, self.target / target_rel)
+                applied_update.append(target_rel)
+            except Exception as e:
+                errors.append((target_rel, str(e)))
+
+        for target_rel in to_remove:
+            try:
+                if not self.dry_run:
+                    (self.target / target_rel).unlink(missing_ok=True)
+                applied_remove.append(target_rel)
+            except Exception as e:
+                errors.append((target_rel, str(e)))
+
+        return {
+            "added": applied_add,
+            "updated": applied_update,
+            "removed": applied_remove,
+            "unchanged": unchanged,
+            "errors": errors,
+        }
+
     # ──────────────────────────────────────────────
     # Internals
     # ──────────────────────────────────────────────
@@ -107,9 +175,106 @@ class FolderSyncer:
             return result
         for f in folder.rglob("*"):
             if f.is_file():
-                rel = str(f.relative_to(folder))
+                rel = f.relative_to(folder).as_posix()
                 result[rel] = f.stat()
         return result
+
+    def _copy(self, source_path: Path, target_path: Path):
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, target_path)
+
+    def _build_source_target_map(self) -> dict[str, str]:
+        source_roots = self.mapping.get("source_roots", {})
+        target_roots = self.mapping.get("target_roots", {})
+        category_map = self.mapping.get("category_map", {})
+        omit_globs = self.mapping.get("omit_globs", [])
+
+        source_to_target = {}
+
+        for source_category, target_category in category_map.items():
+            source_dirs = self._resolve_source_dirs(source_category, source_roots)
+            target_root = target_roots.get(target_category)
+            if target_root is None:
+                raise ValueError(
+                    f"Mapping target category '{target_category}' has no target root."
+                )
+
+            for source_dir in source_dirs:
+                for source_file in source_dir.rglob("*"):
+                    if not source_file.is_file():
+                        continue
+
+                    source_rel_to_root = source_file.relative_to(self.source)
+                    if self._is_omitted(source_rel_to_root, omit_globs):
+                        continue
+
+                    relative_inside_category = source_file.relative_to(source_dir)
+                    target_rel = (Path(target_root) / relative_inside_category).as_posix()
+                    source_rel = source_rel_to_root.as_posix()
+
+                    existing = source_to_target.get(target_rel)
+                    if existing and existing != source_rel:
+                        raise ValueError(
+                            f"Mapped target path conflict: '{target_rel}' from both "
+                            f"'{existing}' and '{source_rel}'."
+                        )
+
+                    source_to_target[target_rel] = source_rel
+
+        return source_to_target
+
+    def _resolve_source_dirs(self, category: str, source_roots: dict) -> list[Path]:
+        rules = self.mapping.get("rules", {})
+        entry = source_roots.get(category)
+        if entry is None:
+            raise ValueError(f"Mapping source category '{category}' has no source root definition.")
+
+        if category == "forge_like" and isinstance(entry, dict):
+            candidates = entry.get("candidates", [])
+            matches = self._resolve_glob_dirs(candidates)
+            if len(matches) > 1 and rules.get("forge_like_conflict") == "error_if_multiple":
+                rendered = ", ".join(str(path) for path in matches)
+                raise ValueError(
+                    "Both forge and neoforge source folders were found; expected only one. "
+                    f"Found: {rendered}"
+                )
+            if len(matches) > 1:
+                return [matches[0]]
+            return matches
+
+        if isinstance(entry, str):
+            patterns = [entry]
+        elif isinstance(entry, list):
+            patterns = entry
+        else:
+            raise ValueError(f"Invalid source root format for category '{category}'.")
+
+        return self._resolve_glob_dirs(patterns)
+
+    def _resolve_glob_dirs(self, patterns: list[str]) -> list[Path]:
+        result = []
+        seen = set()
+        for pattern in patterns:
+            for path in self.source.glob(pattern):
+                if path.is_dir():
+                    normalized = str(path.resolve())
+                    if normalized not in seen:
+                        seen.add(normalized)
+                        result.append(path)
+        return result
+
+    def _is_omitted(self, source_rel_path: Path, patterns: list[str]) -> bool:
+        if not patterns:
+            return False
+
+        source_rel = source_rel_path.as_posix()
+        parts = source_rel_path.parts
+        for pattern in patterns:
+            if fnmatch.fnmatch(source_rel, pattern):
+                return True
+            if any(fnmatch.fnmatch(part, pattern) for part in parts):
+                return True
+        return False
 
     def _hash_file(self, path: Path) -> str:
         """Hash a file's content, applying any configured parsers first."""

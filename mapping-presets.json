@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "presets": {
+    "mc-arch": {
+      "description": "Map multi-platform Minecraft recipe sources into core/fabric/forge target folders.",
+      "source_roots": {
+        "common": [
+          "common/src/generated/resources/data/*/recipes"
+        ],
+        "fabric": [
+          "fabric/src/main/resources/data/*/recipes"
+        ],
+        "forge_like": {
+          "candidates": [
+            "forge/src/main/resources/data/*/recipes",
+            "neoforge/src/main/resources/data/*/recipes"
+          ]
+        }
+      },
+      "target_roots": {
+        "common": "core",
+        "fabric": "fabric",
+        "forge_like": "forge"
+      },
+      "category_map": {
+        "common": "common",
+        "fabric": "fabric",
+        "forge_like": "forge_like"
+      },
+      "omit_globs": [
+        "**/botanypots/**"
+      ],
+      "rules": {
+        "forge_like_conflict": "error_if_multiple",
+        "delete_mode": "global_target"
+      }
+    },
+    "mc-arch-recipes-split": {
+      "description": "Example variant: map to nested recipe target folders and omit selected source namespaces.",
+      "source_roots": {
+        "common": [
+          "common/src/generated/resources/data/*/recipes"
+        ],
+        "fabric": [
+          "fabric/src/main/resources/data/*/recipes"
+        ],
+        "forge_like": {
+          "candidates": [
+            "forge/src/main/resources/data/*/recipes",
+            "neoforge/src/main/resources/data/*/recipes"
+          ]
+        }
+      },
+      "target_roots": {
+        "common": "recipes/core",
+        "fabric": "recipes/fabric",
+        "forge_like": "recipes/forge"
+      },
+      "category_map": {
+        "common": "common",
+        "fabric": "fabric",
+        "forge_like": "forge_like"
+      },
+      "omit_globs": [
+        "**/minecraft/**",
+        "*_backup",
+        "temp"
+      ],
+      "rules": {
+        "forge_like_conflict": "error_if_multiple",
+        "delete_mode": "global_target"
+      }
+    }
+  }
+}
