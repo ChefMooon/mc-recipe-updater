@@ -8,3 +8,6 @@ venv/
 __pycache__/
 *.pyc
 .DS_Store        # Mac folder metadata
+
+# Test folders
+test/
