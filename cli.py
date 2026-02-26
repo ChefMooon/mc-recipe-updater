@@ -8,18 +8,99 @@ Usage:
     mcru list                    # List all saved profiles
     mcru remove <name>           # Remove a profile
     mcru run <profile> --dry-run # Preview without making changes
+    mcru config show             # Show the config directory path and file locations
+    mcru config open             # Open the config directory in the file explorer
 """
 
 import click
-from config import ConfigManager
+import subprocess
+import sys
+import shutil
+from config import ConfigManager, CONFIG_DIR, CONFIG_FILE, DEFAULT_MAPPING_FILE, BUNDLED_MAPPING_FILE
 from syncer import FolderSyncer
-from reporter import Reporter
+from reporter import Reporter, REPORTS_DIR
 
 
 @click.group()
 def cli():
     """mcru - Compare and sync folders using saved profiles."""
     pass
+
+
+# ──────────────────────────────────────────────
+# Config directory
+# ──────────────────────────────────────────────
+
+@cli.group()
+def config():
+    """View or open the mcru config directory."""
+    pass
+
+
+@config.command("show")
+def config_show():
+    """Show the config directory path and file locations."""
+    click.echo(f"\n📁  Config directory : {CONFIG_DIR}")
+    click.echo(f"    profiles.json    : {CONFIG_FILE}")
+    click.echo(f"    mapping-presets  : {DEFAULT_MAPPING_FILE}")
+    click.echo(f"    reports/         : {REPORTS_DIR}\n")
+
+
+@config.command("open")
+def config_open():
+    """Open the config directory in the file explorer."""
+    if not CONFIG_DIR.exists():
+        click.echo("⚠️  Config directory doesn't exist yet. Run any mcru command to create it.")
+        return
+    if sys.platform == "win32":
+        subprocess.Popen(["explorer", str(CONFIG_DIR)])
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", str(CONFIG_DIR)])
+    else:
+        subprocess.Popen(["xdg-open", str(CONFIG_DIR)])
+    click.echo(f"📂  Opened: {CONFIG_DIR}")
+
+
+@config.command("reset-presets")
+def config_reset_presets():
+    """Reset mapping presets to package defaults.\n
+    Deletes ~/.mcru/mapping-presets.json and re-seeds it from the bundled defaults.
+    """
+    if DEFAULT_MAPPING_FILE.exists():
+        DEFAULT_MAPPING_FILE.unlink()
+        click.echo(f"🗑️  Deleted: {DEFAULT_MAPPING_FILE}")
+    
+    if BUNDLED_MAPPING_FILE.exists():
+        shutil.copy2(BUNDLED_MAPPING_FILE, DEFAULT_MAPPING_FILE)
+        click.echo(f"✅  Re-seeded: {DEFAULT_MAPPING_FILE}")
+    else:
+        click.echo(f"⚠️  Bundled mapping file not found: {BUNDLED_MAPPING_FILE}")
+
+
+@config.command("reset")
+def config_reset():
+    """Reset all configs: profiles, mapping presets, and reports.\n
+    WARNING: This will delete all saved profiles, custom presets, and reports!
+    """
+    if not click.confirm("⚠️  This will delete all ~/.mcru/ data (profiles, presets, reports). Continue?"):
+        click.echo("Cancelled.")
+        return
+    
+    if CONFIG_DIR.exists():
+        shutil.rmtree(CONFIG_DIR)
+        click.echo(f"🗑️  Deleted: {CONFIG_DIR}")
+    
+    # Recreate and seed
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_FILE.write_text("{\"profiles\": []}")
+    click.echo(f"✅  Created fresh: {CONFIG_FILE}")
+    
+    if BUNDLED_MAPPING_FILE.exists():
+        shutil.copy2(BUNDLED_MAPPING_FILE, DEFAULT_MAPPING_FILE)
+        click.echo(f"✅  Seeded: {DEFAULT_MAPPING_FILE}")
+    
+    click.echo("✅  Config reset complete.")
+
 
 
 # ──────────────────────────────────────────────

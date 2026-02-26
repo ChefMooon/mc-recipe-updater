@@ -86,6 +86,21 @@ mcru quick ./src ./dist --dry-run
 mcru quick ./my-mod ./target-pack --mapping mc-arch
 ```
 
+### `config` — View or open the config directory
+```bash
+# Print the paths of all config files
+mcru config show
+
+# Open the ~/.mcru/ folder in your file explorer
+mcru config open
+
+# Reset mapping presets to package defaults
+mcru config reset-presets
+
+# Reset ALL configs (profiles, presets, reports) to a clean slate
+mcru config reset
+```
+
 ---
 
 ## Mapping mode
@@ -218,7 +233,8 @@ All user data lives under `~/.mcru/`, created automatically on first run.
 | `~/.mcru/reports/` | Timestamped report files |
 
 > **Note:** `mapping-presets.json` is copied from the package defaults the first time you run `mcru`.
-> Upgrades will never overwrite your local copy. To reset to defaults, delete the file and run any `mcru` command.
+> Upgrades will never overwrite your local copy. To reset presets to defaults, run `mcru config reset-presets`.
+> To reset all configs (including all profiles and reports), run `mcru config reset`.
 
 ---
 

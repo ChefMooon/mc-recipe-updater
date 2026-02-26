@@ -11,7 +11,11 @@ Presets are stored at `~/.mcru/mapping-presets.json`.
 
 This file is automatically seeded from the bundled package defaults the first time `mcru` runs.
 You can freely edit it to add or modify presets — package upgrades will never overwrite your copy.
-To reset to defaults, delete the file and run any `mcru` command.
+
+To reset presets to package defaults, use:
+```bash
+mcru config reset-presets
+```
 
 You can also override the mapping file path by setting the `MCRU_MAPPING_FILE` environment variable.
 
