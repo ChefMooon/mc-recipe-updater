@@ -50,6 +50,20 @@
 
 ---
 
+## Bug Fixes
+
+**When a bug is diagnosed and fixed**, add an entry to `docs/solved-issues.md` before closing the task. Each entry must include:
+
+1. **Date** — `[YYYY-MM-DD]` prefix in the heading
+2. **Symptom** — the exact error or unexpected behaviour observed
+3. **Root Cause** — what in the code caused it
+4. **Fix** — what changed, with a before/after code snippet if helpful
+5. **Files Changed** — file name(s) and affected function/line range
+
+This log exists so future investigations can check whether a similar issue was already solved.
+
+---
+
 ## Documentation Updates
 
 **CRITICAL:** When you modify code, update related documentation:

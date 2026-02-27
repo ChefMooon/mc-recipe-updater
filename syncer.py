@@ -293,16 +293,26 @@ class FolderSyncer:
 
         if category == "forge_like" and isinstance(entry, dict):
             candidates = entry.get("candidates", [])
-            matches = self._resolve_glob_dirs(candidates)
-            if len(matches) > 1 and rules.get("forge_like_conflict") == "error_if_multiple":
-                rendered = ", ".join(str(path) for path in matches)
+            # Resolve each candidate independently so we can detect a genuine
+            # cross-platform conflict (forge AND neoforge both present) without
+            # false-positives from projects that have multiple data namespaces
+            # under a single platform (e.g. farmersdelight + frightsdelight both
+            # inside forge/src/main/resources/data/*/recipes).
+            per_candidate = [self._resolve_glob_dirs([c]) for c in candidates]
+            active = [matches for matches in per_candidate if matches]
+            if len(active) > 1 and rules.get("forge_like_conflict") == "error_if_multiple":
+                all_paths = [path for group in active for path in group]
+                rendered = ", ".join(str(path) for path in all_paths)
                 raise ValueError(
                     "Both forge and neoforge source folders were found; expected only one. "
                     f"Found: {rendered}"
                 )
-            if len(matches) > 1:
-                return [matches[0]]
-            return matches
+            if len(active) > 1:
+                # No conflict rule — fall back to first candidate's matches
+                return active[0]
+            if active:
+                return active[0]
+            return []
 
         if isinstance(entry, str):
             patterns = [entry]
