@@ -3,16 +3,17 @@
 mcru - A CLI tool to compare and sync folders using saved config profiles.
 
 Usage:
-    mcru run <profile>            # Run a saved profile or suite
-    mcru add <name> <src> <tgt>   # Save a new profile
-    mcru list                     # List all saved profiles
-    mcru remove <name>            # Remove a profile
-    mcru run <profile> --dry-run  # Preview without making changes
-    mcru suite add <name>         # Create a new suite
+    mcru run <profile>                    # Run a saved profile or suite
+    mcru profile add <name> <src> <tgt>   # Save a new profile
+    mcru profile list                     # List all saved profiles
+    mcru profile show <name>              # Show details for a single profile
+    mcru profile remove <name>            # Remove a profile
+    mcru profile update <name> <src> <tgt># Edit a saved profile
+    mcru run <profile> --dry-run          # Preview without making changes
+    mcru suite add <name>                 # Create a new suite
     mcru suite add-profile <suite> <profile>  # Add a profile to a suite
-    mcru suite run <suite>        # Run all profiles in a suite
-    mcru config show              # Show the config directory path and file locations
-    mcru config open              # Open the config directory in the file explorer
+    mcru config show                      # Show the config directory path and file locations
+    mcru config open                      # Open the config directory in the file explorer
 """
 
 import json
@@ -114,7 +115,13 @@ def config_reset():
 # Profile Management
 # ──────────────────────────────────────────────
 
-@cli.command()
+@cli.group()
+def profile():
+    """Save and manage sync profiles."""
+    pass
+
+
+@profile.command("add")
 @click.argument("name")
 @click.argument("source")
 @click.argument("target")
@@ -123,9 +130,9 @@ def config_reset():
               help="Apply one or more parsers to source files before comparing.")
 @click.option("--description", "-d", default="", help="Optional description for this profile.")
 @click.option("--mapping", default=None, help="Optional mapping preset name (from mapping-presets.json).")
-def add(name, source, target, parser, description, mapping):
+def profile_add(name, source, target, parser, description, mapping):
     """Save a new sync profile.\n
-    Example: mcru add myproject ./src ./dist --parser normalize_line_endings
+    Example: mcru profile add myproject ./src ./dist --parser normalize_line_endings
     """
     cm = ConfigManager()
     cm.add_profile(name, source, target, list(parser), description, mapping)
@@ -138,13 +145,13 @@ def add(name, source, target, parser, description, mapping):
         click.echo(f"    Mapping: {mapping}")
 
 
-@cli.command("list")
-def list_profiles():
+@profile.command("list")
+def profile_list():
     """List all saved sync profiles."""
     cm = ConfigManager()
     profiles = cm.list_profiles()
     if not profiles:
-        click.echo("No profiles saved yet. Use 'add' to create one.")
+        click.echo("No profiles saved yet. Use 'mcru profile add' to create one.")
         return
     click.echo(f"\n{'NAME':<20} {'SOURCE':<30} {'TARGET':<30} {'PARSERS':<20} MAPPING")
     click.echo("─" * 125)
@@ -155,16 +162,40 @@ def list_profiles():
     click.echo()
 
 
-@cli.command()
+@profile.command("show")
 @click.argument("name")
-def remove(name):
+def profile_show(name):
+    """Show all details for a single saved profile."""
+    cm = ConfigManager()
+    p = cm.get_profile(name)
+    if p is None:
+        click.echo(f"❌  Profile '{name}' not found.")
+        return
+    click.echo(f"\nProfile : {p['name']}")
+    if p.get("description"):
+        click.echo(f"Desc    : {p['description']}")
+    click.echo("─" * 40)
+    click.echo(f"  Source  : {p['source']}")
+    click.echo(f"  Target  : {p['target']}")
+    parsers = ", ".join(p.get("parsers", [])) or "—"
+    click.echo(f"  Parsers : {parsers}")
+    mapping = p.get("mapping_preset") or "—"
+    click.echo(f"  Mapping : {mapping}")
+    if p.get("created_at"):
+        click.echo(f"  Created : {p['created_at']}")
+    click.echo()
+
+
+@profile.command("remove")
+@click.argument("name")
+def profile_remove(name):
     """Remove a saved profile."""
     cm = ConfigManager()
     cm.remove_profile(name)
     click.echo(f"🗑️  Profile '{name}' removed.")
 
 
-@cli.command()
+@profile.command("update")
 @click.argument("name")
 @click.argument("source")
 @click.argument("target")
@@ -172,8 +203,10 @@ def remove(name):
               type=click.Choice(["strip_bom", "normalize_line_endings", "lowercase_names"]))
 @click.option("--description", "-d", default="")
 @click.option("--mapping", default=None, help="Optional mapping preset name (from mapping-presets.json).")
-def update(name, source, target, parser, description, mapping):
-    """Update an existing profile."""
+def profile_update(name, source, target, parser, description, mapping):
+    """Update an existing profile.\n
+    Example: mcru profile update myproject ./src ./dist
+    """
     cm = ConfigManager()
     cm.add_profile(name, source, target, list(parser), description, mapping)
     click.echo(f"✏️  Profile '{name}' updated.")
@@ -204,7 +237,7 @@ def run(profile, dry_run, no_report, source, target, mapping):
         suite = cm.get_suite(profile)
         if suite is None:
             click.echo(f"❌  '{profile}' not found. "
-                       "Run 'list' to see profiles or 'suite list' for suites.")
+                       "Run 'mcru profile list' to see profiles or 'mcru suite list' for suites.")
             return
 
         mode_label = "DRY RUN" if dry_run else "LIVE"

@@ -22,7 +22,7 @@ After this, `mcru` is available as a terminal command from anywhere.
 
 ```bash
 # Save a profile
-mcru add myproject ./src ./dist
+mcru profile add myproject ./src ./dist
 
 # Run it
 mcru run myproject
@@ -42,10 +42,11 @@ mcru quick ./src ./dist --dry-run
 
 | Command | Description |
 |---------|-------------|
-| `mcru add <name> <src> <tgt>` | Save a new sync profile |
-| `mcru list` | Show all saved profiles |
-| `mcru remove <name>` | Delete a profile |
-| `mcru update <name> <src> <tgt>` | Edit a saved profile |
+| `mcru profile add <name> <src> <tgt>` | Save a new sync profile |
+| `mcru profile list` | Show all saved profiles |
+| `mcru profile show <name>` | Show details for a single profile |
+| `mcru profile remove <name>` | Delete a profile |
+| `mcru profile update <name> <src> <tgt>` | Edit a saved profile |
 | `mcru run <name>` | Run a profile or suite (`--dry-run` to preview) |
 | `mcru quick <src> <tgt>` | One-off sync without saving a profile |
 | `mcru suite ...` | Create and manage suites (ordered groups of profiles) |
@@ -63,7 +64,7 @@ When a mapping preset is set, source files are categorised and routed into mappe
 3. No mapping — default path-mirroring behaviour
 
 ```bash
-mcru add recipes ./my-mod ./target-pack --mapping mc-arch
+mcru profile add recipes ./my-mod ./target-pack --mapping mc-arch
 mcru run recipes
 ```
 
@@ -82,7 +83,7 @@ Parsers transform file content **before hashing** so minor encoding differences 
 | `strip_trailing_whitespace` | Strips trailing whitespace from each line |
 
 ```bash
-mcru add myproject ./src ./dist \
+mcru profile add myproject ./src ./dist \
   --parser strip_bom \
   --parser normalize_line_endings
 ```

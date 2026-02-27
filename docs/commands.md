@@ -6,10 +6,10 @@ Full flag and option reference for every `mcru` command.
 
 ## Profile Commands
 
-### `mcru add` — Save a new profile
+### `mcru profile add` — Save a new profile
 
 ```bash
-mcru add <name> <source> <target> [options]
+mcru profile add <name> <source> <target> [options]
 ```
 
 | Flag | Description |
@@ -19,35 +19,45 @@ mcru add <name> <source> <target> [options]
 | `--mapping <preset>` | Mapping preset name |
 
 ```bash
-mcru add myproject ./src ./dist
-mcru add recipes ./my-mod ./target-pack --mapping mc-arch
-mcru add configs ~/dotfiles ~/.config --parser strip_bom --parser normalize_line_endings
+mcru profile add myproject ./src ./dist
+mcru profile add recipes ./my-mod ./target-pack --mapping mc-arch
+mcru profile add configs ~/dotfiles ~/.config --parser strip_bom --parser normalize_line_endings
 ```
 
 ---
 
-### `mcru list` — Show all saved profiles
+### `mcru profile list` — Show all saved profiles
 
 ```bash
-mcru list
+mcru profile list
 ```
 
 Prints a table with name, source, target, parsers, and mapping preset for every saved profile.
 
 ---
 
-### `mcru remove` — Delete a profile
+### `mcru profile show` — Inspect a single profile
 
 ```bash
-mcru remove <name>
+mcru profile show <name>
+```
+
+Prints all details for the named profile: source, target, parsers, mapping preset, and creation timestamp.
+
+---
+
+### `mcru profile remove` — Delete a profile
+
+```bash
+mcru profile remove <name>
 ```
 
 ---
 
-### `mcru update` — Edit a saved profile
+### `mcru profile update` — Edit a saved profile
 
 ```bash
-mcru update <name> <source> <target> [options]
+mcru profile update <name> <source> <target> [options]
 ```
 
 Overwrites the saved profile (same options as `add`). The `created_at` timestamp is preserved.
