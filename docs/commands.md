@@ -77,6 +77,18 @@ Quick runs do not save a report file.
 
 ## Profile Commands
 
+See [profiles.md](profiles.md) for a full guide including profile schema, report format, and tips.
+
+### Quick Reference
+
+| Command | Description |
+|---------|-------------|
+| `mcru profile add <name> <source> <target>` | Save a new profile |
+| `mcru profile list` | List all saved profiles |
+| `mcru profile show <name>` | Inspect a single profile |
+| `mcru profile remove <name>` | Delete a profile |
+| `mcru profile update <name> <source> <target>` | Overwrite a saved profile |
+
 ### `mcru profile add` — Save a new profile
 
 ```bash
@@ -144,6 +156,19 @@ Overwrites the saved profile (same options as `add`). The `created_at` timestamp
 ## Suite Commands
 
 See [suites.md](suites.md) for a full guide including schemas, report format, and error handling.
+
+### Quick Reference
+
+| Command | Description |
+|---------|-------------|
+| `mcru suite add <name>` | Create an empty suite |
+| `mcru suite remove <name>` | Delete a suite |
+| `mcru suite update <name>` | Update a suite's description |
+| `mcru suite list` | List all suites |
+| `mcru suite show <name>` | Inspect a suite and its profile order |
+| `mcru suite add-profile <suite> <profile>` | Append a profile to a suite |
+| `mcru suite remove-profile <suite> <profile>` | Remove a profile from a suite |
+| `mcru suite reorder <suite> <profile> <position>` | Change a profile's execution order |
 
 ### `mcru suite add` — Create a suite
 
@@ -217,6 +242,17 @@ mcru suite reorder all-mods mod-c 1
 
 ## Config Commands
 
+See [config.md](config.md) for a full guide including config directory layout and reset strategy details.
+
+### Quick Reference
+
+| Command | Description |
+|---------|-------------|
+| `mcru config show` | Print paths of all config files and directories |
+| `mcru config open` | Open the config directory in the file explorer |
+| `mcru config reset-presets` | Restore bundled mapping presets without touching profiles or reports |
+| `mcru config reset` | Delete and recreate the entire config directory |
+
 ### `mcru config show`
 
 Prints the absolute paths of all config files:
@@ -248,6 +284,18 @@ Prompts for confirmation, then deletes the entire `~/.mcru/` directory and recre
 ## Reports Commands
 
 See [reports.md](reports.md) for a full guide including report file format and prune strategy details.
+
+### Quick Reference
+
+| Command | Description |
+|---------|-------------|
+| `mcru reports show` | Show reports directory path and count |
+| `mcru reports list` | List all reports (with filtering and sort options) |
+| `mcru reports open` | Open the reports folder in the file explorer |
+| `mcru reports view <name>` | Print a report's contents to the terminal |
+| `mcru reports delete <name>` | Delete one or more reports by filename |
+| `mcru reports search <query>` | Find reports by profile or suite name |
+| `mcru reports prune` | Delete old reports in bulk by count, age, or all |
 
 ### `mcru reports show`
 
