@@ -20,6 +20,10 @@ from registry import get_parser
 
 
 class FolderSyncer:
+    # Files at the root of the target that are never removed, regardless of source contents.
+    # CHANGELOG.md is tool-managed and must not be deleted between runs.
+    TARGET_PROTECTED_FILES = {"CHANGELOG.md"}
+
     def __init__(self, config: dict, dry_run: bool = False):
         self.source = Path(config["source"])
         self.target = Path(config["target"])
@@ -61,7 +65,7 @@ class FolderSyncer:
 
         # Find files only in target (should be removed)
         for rel_path in target_files:
-            if rel_path not in source_files:
+            if rel_path not in source_files and rel_path not in self.TARGET_PROTECTED_FILES:
                 to_remove.append(rel_path)
 
         # Apply changes
@@ -172,7 +176,7 @@ class FolderSyncer:
                     unchanged.append(target_rel)
 
         for rel_path in target_files:
-            if rel_path not in source_to_target:
+            if rel_path not in source_to_target and rel_path not in self.TARGET_PROTECTED_FILES:
                 to_remove.append(rel_path)
 
         applied_add = []

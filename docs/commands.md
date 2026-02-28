@@ -13,6 +13,10 @@ Full flag and option reference for every `mcru` command.
 - **[Config](#config-commands)** — View, manage, and reset configuration files and presets
 - **[Reports](#reports-commands)** — List, view, search, and prune saved run reports
 
+## Feature Guides
+
+- **[Target Changelog](target-changelog.md)** — Automatically maintain a `CHANGELOG.md` inside the target folder
+
 ## Common Flags
 
 | Flag | Description | Applies To |
@@ -24,6 +28,7 @@ Full flag and option reference for every `mcru` command.
 | `--source <path>` | Override source folder | `run` |
 | `--target <path>` | Override target folder | `run` |
 | `--no-report` | Skip saving report file | `run` |
+| `--target-changelog` | Prepend entry to `CHANGELOG.md` in target folder | `profile add` \| `profile update` \| `run` |
 
 ---
 
@@ -42,14 +47,20 @@ Accepts a **profile name** or a **suite name** — profile lookup happens first,
 | `--source <path>` | Override source folder for this run only |
 | `--target <path>` | Override target folder for this run only |
 | `--mapping <preset>` | Override mapping preset for this run only |
+| `--target-changelog` | Prepend a Markdown entry to `CHANGELOG.md` in the target folder (live runs only) |
 
 `--source`, `--target`, and `--mapping` apply to every profile when running a suite. Saved profile definitions are never modified.
+
+`--target-changelog` can also be set permanently per-profile with `profile add --target-changelog`; the CLI flag overrides the profile setting.
+
+See [target-changelog.md](target-changelog.md) for a full guide including entry format, suite behaviour, and tips.
 
 ```bash
 mcru run myproject
 mcru run myproject --dry-run
 mcru run myproject --target /other/path
 mcru run full-sync --mapping mc-arch
+mcru run myproject --target-changelog
 ```
 
 ---
@@ -100,11 +111,13 @@ mcru profile add <name> <source> <target> [options]
 | `-p, --parser <name>` | Apply a content parser before hashing (repeatable) |
 | `-d, --desc <text>` | Optional description |
 | `--mapping <preset>` | Mapping preset name |
+| `--target-changelog` | Enable changelog writing for every live run of this profile |
 
 ```bash
 mcru profile add myproject ./src ./dist
 mcru profile add recipes ./my-mod ./target-pack --mapping mc-arch
 mcru profile add configs ~/dotfiles ~/.config --parser strip_bom --parser normalize_line_endings
+mcru profile add recipes ./my-mod ./target-pack --target-changelog
 ```
 
 ---
@@ -150,6 +163,7 @@ Overwrites the saved profile (same options as `add`). The `created_at` timestamp
 | `-p, --parser <name>` | Parser (repeatable) |
 | `-d, --desc <text>` | Description |
 | `--mapping <preset>` | Mapping preset name |
+| `--target-changelog` | Enable changelog writing for every live run of this profile |
 
 ---
 

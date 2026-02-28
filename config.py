@@ -78,6 +78,7 @@ class ConfigManager:
         parsers: list,
         description: str = "",
         mapping_preset: str | None = None,
+        target_changelog: bool = False,
     ):
         # Remove existing profile with the same name (upsert)
         self.profiles = [p for p in self.profiles if p["name"] != name]
@@ -91,6 +92,8 @@ class ConfigManager:
         }
         if mapping_preset:
             profile["mapping_preset"] = mapping_preset
+        if target_changelog:
+            profile["target_changelog"] = True
         self.profiles.append(profile)
         self._save()
 

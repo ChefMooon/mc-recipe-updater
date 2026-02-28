@@ -81,6 +81,10 @@ This log exists so future investigations can check whether a similar issue was a
 3. **CLI Commands**
    - Update docstring in the command function
    - Update README.md with new command syntax
+   - Update `docs/commands.md` with new flags, options, and examples
+   - If a new flag or feature is significant enough to warrant explanation,
+     create a dedicated `docs/<feature-name>.md` guide and link to it from
+     `docs/commands.md` where relevant
 
 4. **Parser/Registry Changes**
    - Update parser docstrings in `registry.py`

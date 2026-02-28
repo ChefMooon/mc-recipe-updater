@@ -325,3 +325,103 @@ class SuiteReporter:
 
         filepath.write_text("\n".join(lines), encoding="utf-8")
         return str(filepath)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Target Changelog Writer — writes CHANGELOG.md inside target folder
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TargetChangelogWriter:
+    """
+    Prepends a Markdown changelog entry to CHANGELOG.md in the target folder.
+
+    Only writes when the run is live (not dry-run) and at least one real
+    change was made (added, updated, removed, or directory changes).
+
+    Parameters
+    ----------
+    target_path : str | Path
+        The synced target folder — CHANGELOG.md will be written here.
+    profile_name : str
+        Profile name included in the entry header.
+    """
+
+    CHANGELOG_FILENAME = "CHANGELOG.md"
+
+    def __init__(self, target_path, profile_name: str):
+        self.target_path = Path(target_path)
+        self.profile_name = profile_name
+        self.timestamp = datetime.now()
+
+    def _has_changes(self, results: dict) -> bool:
+        return bool(
+            results.get("added") or results.get("updated") or results.get("removed")
+            or results.get("dirs_added") or results.get("dirs_removed")
+        )
+
+    def _build_entry(self, results: dict, config: dict) -> str:
+        r = results
+        ts = self.timestamp.strftime("%Y-%m-%d %H:%M:%S")
+        parsers = ", ".join(config.get("parsers", [])) or "none"
+        mapping  = config.get("mapping_preset") or "none"
+
+        summary_parts = []
+        if r.get("added"):         summary_parts.append(f"{len(r['added'])} added")
+        if r.get("updated"):       summary_parts.append(f"{len(r['updated'])} updated")
+        if r.get("removed"):       summary_parts.append(f"{len(r['removed'])} removed")
+        if r.get("dirs_added"):    summary_parts.append(f"{len(r['dirs_added'])} dirs added")
+        if r.get("dirs_removed"):  summary_parts.append(f"{len(r['dirs_removed'])} dirs removed")
+        if r.get("errors"):        summary_parts.append(f"{len(r['errors'])} errors")
+        summary_str = ", ".join(summary_parts) or "no changes"
+
+        lines = [
+            f"## {ts} \u2014 {self.profile_name}",
+            "",
+            f"**Summary:** {summary_str}  ",
+            f"**Source:** `{config.get('source', '\u2014')}`  ",
+            f"**Target:** `{config.get('target', '\u2014')}`  ",
+            f"**Parsers:** {parsers}  ",
+            f"**Mapping:** {mapping}  ",
+            "",
+        ]
+
+        def file_list(items, suffix=""):
+            return [f"- `{f}{suffix}`" for f in items] if items else ["_(none)_"]
+
+        if r.get("added"):
+            lines += [f"### Added ({len(r['added'])})", *file_list(r["added"]), ""]
+
+        if r.get("dirs_added"):
+            lines += [f"### Dirs Added ({len(r['dirs_added'])})", *file_list(r["dirs_added"], "/"), ""]
+
+        if r.get("updated"):
+            lines += [f"### Updated ({len(r['updated'])})", *file_list(r["updated"]), ""]
+
+        if r.get("removed"):
+            lines += [f"### Removed ({len(r['removed'])})", *file_list(r["removed"]), ""]
+
+        if r.get("dirs_removed"):
+            lines += [f"### Dirs Removed ({len(r['dirs_removed'])})", *file_list(r["dirs_removed"], "/"), ""]
+
+        if r.get("errors"):
+            lines += [f"### Errors ({len(r['errors'])})",
+                      *[f"- `{f}`: {err}" for f, err in r["errors"]], ""]
+
+        lines += ["---", ""]
+        return "\n".join(lines)
+
+    def write(self, results: dict, config: dict) -> bool:
+        """
+        Prepend a changelog entry to CHANGELOG.md in the target folder.
+
+        Returns True if the file was written, False if skipped (no changes).
+        """
+        if not self._has_changes(results):
+            return False
+
+        changelog_path = self.target_path / self.CHANGELOG_FILENAME
+        new_entry = self._build_entry(results, config)
+        existing = changelog_path.read_text(encoding="utf-8") if changelog_path.exists() else ""
+        content = new_entry + ("\n" + existing if existing else "")
+        changelog_path.write_text(content, encoding="utf-8")
+        return True

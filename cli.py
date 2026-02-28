@@ -28,9 +28,10 @@ import click
 import subprocess
 import sys
 import shutil
+from pathlib import Path
 from config import ConfigManager, ReportManager, CONFIG_DIR, CONFIG_FILE, SUITES_FILE, DEFAULT_MAPPING_FILE, BUNDLED_MAPPING_FILE
 from syncer import FolderSyncer
-from reporter import Reporter, SuiteReporter, REPORTS_DIR
+from reporter import Reporter, SuiteReporter, TargetChangelogWriter, REPORTS_DIR
 
 
 @click.group()
@@ -335,12 +336,14 @@ def profile():
               help="Apply one or more parsers to source files before comparing.")
 @click.option("--description", "-d", default="", help="Optional description for this profile.")
 @click.option("--mapping", default=None, help="Optional mapping preset name (from mapping-presets.json).")
-def profile_add(name, source, target, parser, description, mapping):
+@click.option("--target-changelog", is_flag=True, default=False,
+              help="Append a Markdown changelog entry to CHANGELOG.md in the target folder on every live run.")
+def profile_add(name, source, target, parser, description, mapping, target_changelog):
     """Save a new sync profile.\n
     Example: mcru profile add myproject ./src ./dist --parser normalize_line_endings
     """
     cm = ConfigManager()
-    cm.add_profile(name, source, target, list(parser), description, mapping)
+    cm.add_profile(name, source, target, list(parser), description, mapping, target_changelog)
     click.echo(f"✅  Profile '{name}' saved.")
     click.echo(f"    Source : {source}")
     click.echo(f"    Target : {target}")
@@ -348,6 +351,8 @@ def profile_add(name, source, target, parser, description, mapping):
         click.echo(f"    Parsers: {', '.join(parser)}")
     if mapping:
         click.echo(f"    Mapping: {mapping}")
+    if target_changelog:
+        click.echo(f"    Target changelog: enabled")
 
 
 @profile.command("list")
@@ -386,6 +391,7 @@ def profile_show(name):
     click.echo(f"  Parsers : {parsers}")
     mapping = p.get("mapping_preset") or "—"
     click.echo(f"  Mapping : {mapping}")
+    click.echo(f"  Target changelog: {'enabled' if p.get('target_changelog') else 'disabled'}")
     if p.get("created_at"):
         click.echo(f"  Created : {p['created_at']}")
     click.echo()
@@ -408,12 +414,14 @@ def profile_remove(name):
               type=click.Choice(["strip_bom", "normalize_line_endings", "lowercase_names"]))
 @click.option("--description", "-d", default="")
 @click.option("--mapping", default=None, help="Optional mapping preset name (from mapping-presets.json).")
-def profile_update(name, source, target, parser, description, mapping):
+@click.option("--target-changelog", is_flag=True, default=False,
+              help="Enable target changelog for this profile.")
+def profile_update(name, source, target, parser, description, mapping, target_changelog):
     """Update an existing profile.\n
     Example: mcru profile update myproject ./src ./dist
     """
     cm = ConfigManager()
-    cm.add_profile(name, source, target, list(parser), description, mapping)
+    cm.add_profile(name, source, target, list(parser), description, mapping, target_changelog)
     click.echo(f"✏️  Profile '{name}' updated.")
 
 
@@ -428,7 +436,9 @@ def profile_update(name, source, target, parser, description, mapping):
 @click.option("--source", default=None, help="Override the source folder for this run (applies to every profile in a suite).")
 @click.option("--target", default=None, help="Override the target folder for this run (applies to every profile in a suite).")
 @click.option("--mapping", default=None, help="Mapping preset name. Overrides profile/suite mapping if set.")
-def run(profile, dry_run, no_report, source, target, mapping):
+@click.option("--target-changelog", is_flag=True, default=False,
+              help="Prepend a Markdown entry to CHANGELOG.md in the target folder on every live run (overrides profile setting).")
+def run(profile, dry_run, no_report, source, target, mapping, target_changelog):
     """Run a sync job using a saved profile or suite.\n
     If the name matches a suite, all profiles in the suite are run in order
     and a single combined report is produced.\n
@@ -489,6 +499,10 @@ def run(profile, dry_run, no_report, source, target, mapping):
                 continue
             runs.append((pname, pcfg, results))
 
+            if (target_changelog or pcfg.get("target_changelog")) and not dry_run:
+                writer = TargetChangelogWriter(pcfg["target"], pname)
+                writer.write(results, pcfg)
+
         if not runs:
             click.echo("\n❌  No profiles ran successfully.")
             return
@@ -499,6 +513,13 @@ def run(profile, dry_run, no_report, source, target, mapping):
         if not no_report:
             report_path = suite_reporter.save_report()
             click.echo(f"\n📄  Suite report saved to: {report_path}")
+
+        changelog_profiles = [
+            pname for pname, pcfg, _ in runs
+            if target_changelog or pcfg.get("target_changelog")
+        ]
+        if changelog_profiles and not dry_run:
+            click.echo(f"\n📋  Changelog updated for: {', '.join(changelog_profiles)}")
         return
 
     # ── Single profile run ─────────────────────────────────────────
@@ -543,6 +564,12 @@ def run(profile, dry_run, no_report, source, target, mapping):
     if not no_report:
         report_path = reporter.save_report()
         click.echo(f"\n📄  Report saved to: {report_path}")
+
+    if (target_changelog or config.get("target_changelog")) and not dry_run:
+        writer = TargetChangelogWriter(config["target"], profile)
+        if writer.write(results, config):
+            changelog_path = Path(config["target"]) / TargetChangelogWriter.CHANGELOG_FILENAME
+            click.echo(f"\n📋  Changelog updated: {changelog_path}")
 
 
 # ──────────────────────────────────────────────
