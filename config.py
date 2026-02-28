@@ -113,6 +113,43 @@ class ConfigManager:
     def list_profiles(self) -> list:
         return list(self.profiles)
 
+    def _get_profile_mutable(self, name: str) -> dict:
+        """Return the live profile dict (not a copy) for in-place mutation."""
+        for p in self.profiles:
+            if p["name"] == name:
+                return p
+        raise ValueError(f"Profile '{name}' not found.")
+
+    def update_profile_field(self, name: str, field: str, value):
+        """Update a single field of an existing profile without touching others.
+        
+        Supported fields: description, mapping_preset, target_changelog, source, target, parsers
+        """
+        profile = self._get_profile_mutable(name)
+        
+        if field == "description":
+            profile["description"] = value
+        elif field == "mapping_preset":
+            if value is None:
+                profile.pop("mapping_preset", None)
+            else:
+                profile["mapping_preset"] = value
+        elif field == "target_changelog":
+            if value:
+                profile["target_changelog"] = True
+            else:
+                profile.pop("target_changelog", None)
+        elif field == "source":
+            profile["source"] = str(Path(value).resolve())
+        elif field == "target":
+            profile["target"] = str(Path(value).resolve())
+        elif field == "parsers":
+            profile["parsers"] = list(value) if value else []
+        else:
+            raise ValueError(f"Cannot update field '{field}'. Supported fields: description, mapping_preset, target_changelog, source, target, parsers")
+        
+        self._save()
+
     # ──────────────────────────────────────────────
     # Suite management
     # ──────────────────────────────────────────────

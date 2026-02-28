@@ -110,6 +110,42 @@ The `created_at` timestamp is preserved.
 mcru profile update myproject ./new-src ./new-dist --mapping mc-arch
 ```
 
+### Update specific profile fields
+```bash
+mcru profile set <name> [options]
+```
+Update individual profile fields without re-specifying the entire configuration.
+Only the fields you provide are changed; all other profile settings are preserved.
+
+| Flag | Description |
+|------|-------------|
+| `-d, --description <text>` | Update profile description |
+| `--mapping <preset>` | Change mapping preset |
+| `--parser <name>` | Replace parser list (repeatable; leaves empty if none specified) |
+| `--target-changelog <on\|off>` | Enable or disable target changelog |
+| `--source <path>` | Update source folder path |
+| `--target <path>` | Update target folder path |
+
+```bash
+# Change only the mapping preset
+mcru profile set myproject --mapping mc-arch-recipes-split
+
+# Add/change parsers without touching paths
+mcru profile set myproject --parser strip_bom --parser normalize_line_endings
+
+# Toggle target changelog
+mcru profile set myproject --target-changelog on
+
+# Update description
+mcru profile set myproject -d "Updated mon sync for 1.20.1"
+
+# Fix a path without losing other settings
+mcru profile set myproject --source /correct/path
+
+# Combine multiple updates
+mcru profile set myproject --mapping mc-arch --parser normalize_line_endings --target-changelog on
+```
+
 ---
 
 ## Running a profile

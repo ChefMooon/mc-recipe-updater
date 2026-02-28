@@ -45,7 +45,7 @@ mcru quick ./src ./dist --dry-run
 | `mcru run <name>` | Run a profile or suite (`--dry-run` to preview) |
 | `mcru quick <src> <tgt>` | One-off sync without saving a profile |
 | `mcru profile ...` | Create and manage sync profiles |
-| `mcru suite ...` | Create and manage suites (ordered groups of profiles) |
+| `mcru suite ...` | Create and manage suites |
 | `mcru config ...` | View, open, or reset the config directory |
 | `mcru reports ...` | List, view, search, and prune saved run reports |
 

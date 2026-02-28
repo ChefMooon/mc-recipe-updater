@@ -425,6 +425,69 @@ def profile_update(name, source, target, parser, description, mapping, target_ch
     click.echo(f"✏️  Profile '{name}' updated.")
 
 
+@profile.command("set")
+@click.argument("name")
+@click.option("--description", "-d", default=None, help="Update profile description.")
+@click.option("--mapping", default=None, help="Update mapping preset name.")
+@click.option("--target-changelog", type=click.Choice(["on", "off"]), default=None,
+              help="Enable or disable target changelog.")
+@click.option("--parser", "-p", multiple=True,
+              type=click.Choice(["strip_bom", "normalize_line_endings", "lowercase_names"]),
+              help="Set parser list (replaces existing parsers).")
+@click.option("--source", default=None, help="Update source folder path.")
+@click.option("--target", default=None, help="Update target folder path.")
+def profile_set(name, description, mapping, target_changelog, parser, source, target):
+    """Update individual fields of an existing profile.\n
+    Example: mcru profile set myproject --mapping mc-arch-recipes-split
+    Example: mcru profile set myproject --parser normalize_line_endings --target-changelog on
+    Example: mcru profile set myproject -d "Updated description"
+    """
+    cm = ConfigManager()
+    
+    # Check if profile exists
+    if cm.get_profile(name) is None:
+        click.echo(f"❌  Profile '{name}' not found.")
+        return
+    
+    changes = []
+    
+    # Update each field if provided
+    if description is not None:
+        cm.update_profile_field(name, "description", description)
+        changes.append(f"description → {description}")
+    
+    if mapping is not None:
+        cm.update_profile_field(name, "mapping_preset", mapping)
+        changes.append(f"mapping → {mapping}")
+    
+    if target_changelog is not None:
+        is_enabled = target_changelog == "on"
+        cm.update_profile_field(name, "target_changelog", is_enabled)
+        status = "enabled" if is_enabled else "disabled"
+        changes.append(f"target-changelog → {status}")
+    
+    if parser:
+        cm.update_profile_field(name, "parsers", list(parser))
+        parser_str = ", ".join(parser) if parser else "(none)"
+        changes.append(f"parsers → {parser_str}")
+    
+    if source is not None:
+        cm.update_profile_field(name, "source", source)
+        changes.append(f"source → {source}")
+    
+    if target is not None:
+        cm.update_profile_field(name, "target", target)
+        changes.append(f"target → {target}")
+    
+    if not changes:
+        click.echo(f"❌  No changes specified. Use --description, --mapping, --parser, --target-changelog, --source, or --target.")
+        return
+    
+    click.echo(f"✏️  Profile '{name}' updated:")
+    for change in changes:
+        click.echo(f"    • {change}")
+
+
 # ──────────────────────────────────────────────
 # Run a Sync Job
 # ──────────────────────────────────────────────
@@ -578,7 +641,7 @@ def run(profile, dry_run, no_report, source, target, mapping, target_changelog):
 
 @cli.group()
 def suite():
-    """Create and manage suites (ordered groups of profiles run together)."""
+    """Create and manage suites."""
     pass
 
 
