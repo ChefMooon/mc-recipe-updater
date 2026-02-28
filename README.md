@@ -3,7 +3,7 @@
 A terminal tool to compare and sync folders using saved profiles.  
 Source is always treated as the **correct version**. Target is brought in line with it.
 
-> **Docs:** [Architecture & full reference](docs/architecture.md) · [Command Reference](docs/commands.md) · [Folder Mapping](docs/folder-mapping.md) · [Suites](docs/suites.md)
+> **Docs:** [Architecture & full reference](docs/architecture.md) · [Command Reference](docs/commands.md) · [Folder Mapping](docs/folder-mapping.md) · [Suites](docs/suites.md) · [Reports](docs/reports.md)
 
 ---
 
@@ -47,6 +47,7 @@ mcru quick ./src ./dist --dry-run
 | `mcru profile ...` | Create and manage sync profiles |
 | `mcru suite ...` | Create and manage suites (ordered groups of profiles) |
 | `mcru config ...` | View, open, or reset the config directory |
+| `mcru reports ...` | List, view, search, and prune saved run reports |
 
 ---
 

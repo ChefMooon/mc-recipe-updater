@@ -11,6 +11,7 @@ Full flag and option reference for every `mcru` command.
 - **[Profile](#profile-commands)** — Save and manage folder sync profiles with source/target paths and options
 - **[Suite](#suite-commands)** — Create and manage ordered groups of profiles to run in sequence
 - **[Config](#config-commands)** — View, manage, and reset configuration files and presets
+- **[Reports](#reports-commands)** — List, view, search, and prune saved run reports
 
 ## Common Flags
 
@@ -241,3 +242,109 @@ Use this to restore presets after manual edits go wrong, without touching profil
 
 Prompts for confirmation, then deletes the entire `~/.mcru/` directory and recreates it from scratch.  
 **All profiles, suites, custom presets, and reports are permanently deleted.**
+
+---
+
+## Reports Commands
+
+See [reports.md](reports.md) for a full guide including report file format and prune strategy details.
+
+### `mcru reports show`
+
+```bash
+mcru reports show
+```
+
+Prints the absolute path of the reports directory and current report count.
+
+### `mcru reports list` — List saved reports
+
+```bash
+mcru reports list [options]
+```
+
+| Flag | Description |
+|------|-------------|
+| `-l, --limit N` | Show only the N most recent reports (default: all) |
+| `--sort <date\|name\|size>` | Sort order (default: `date`, newest first) |
+
+```bash
+mcru reports list
+mcru reports list --limit 10
+mcru reports list --sort size
+```
+
+### `mcru reports open`
+
+```bash
+mcru reports open
+```
+
+Opens `~/.mcru/reports/` in the system file explorer.
+
+### `mcru reports view` — Display a report
+
+```bash
+mcru reports view <name>
+```
+
+Prints the full contents of the named report to the terminal. `NAME` is the filename with or without the `.txt` extension.
+
+```bash
+mcru reports view myproject_20260228_120000
+mcru reports view myproject_20260228_120000.txt
+```
+
+### `mcru reports delete` — Delete reports by name
+
+```bash
+mcru reports delete <name> [<name> ...] [options]
+```
+
+| Flag | Description |
+|------|--------------|
+| `-y, --yes` | Skip confirmation prompt |
+
+```bash
+mcru reports delete myproject_20260228_120000
+mcru reports delete report1 report2 report3 --yes
+```
+
+### `mcru reports search` — Find reports by profile or suite name
+
+```bash
+mcru reports search <query>
+```
+
+Case-insensitive substring search against the profile or suite name embedded in the report filename.
+
+```bash
+mcru reports search myproject
+mcru reports search suite
+```
+
+### `mcru reports prune` — Delete old reports in bulk
+
+```bash
+mcru reports prune [options]
+```
+
+At least one strategy flag is required. Strategies are **additive** (union): combining `--keep` and `--older-than` deletes reports matching either condition.
+
+| Flag | Description |
+|------|-------------|
+| `--keep N` | Keep only the N most recent reports; delete the rest |
+| `--older-than DAYS` | Delete reports older than DAYS days |
+| `--all` | Delete all reports |
+| `--dry-run` | Preview what would be deleted without deleting |
+| `-y, --yes` | Skip confirmation prompt |
+
+Always previews the deletion list before asking for confirmation. `--dry-run` stops before the confirmation prompt.
+
+```bash
+mcru reports prune --keep 10
+mcru reports prune --older-than 30
+mcru reports prune --keep 5 --older-than 90
+mcru reports prune --all
+mcru reports prune --keep 10 --dry-run
+```

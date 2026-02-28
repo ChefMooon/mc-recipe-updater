@@ -14,6 +14,13 @@ Usage:
     mcru suite add-profile <suite> <profile>  # Add a profile to a suite
     mcru config show                      # Show the config directory path and file locations
     mcru config open                      # Open the config directory in the file explorer
+    mcru reports show                     # Show the reports directory path and count
+    mcru reports list                     # List saved reports with timestamps and sizes
+    mcru reports open                     # Open the reports directory in the file explorer
+    mcru reports view <name>              # Display the contents of a report
+    mcru reports delete <name>            # Delete one or more reports
+    mcru reports search <query>           # Search reports by profile or suite name
+    mcru reports prune                    # Delete old reports by count, age, or all
 """
 
 import json
@@ -21,7 +28,7 @@ import click
 import subprocess
 import sys
 import shutil
-from config import ConfigManager, CONFIG_DIR, CONFIG_FILE, SUITES_FILE, DEFAULT_MAPPING_FILE, BUNDLED_MAPPING_FILE
+from config import ConfigManager, ReportManager, CONFIG_DIR, CONFIG_FILE, SUITES_FILE, DEFAULT_MAPPING_FILE, BUNDLED_MAPPING_FILE
 from syncer import FolderSyncer
 from reporter import Reporter, SuiteReporter, REPORTS_DIR
 
@@ -109,6 +116,204 @@ def config_reset():
 
     click.echo("✅  Config reset complete.")
 
+
+# ──────────────────────────────────────────────
+# Reports
+# ──────────────────────────────────────────────
+
+@cli.group()
+def reports():
+    """View and manage saved run reports."""
+    pass
+
+
+@reports.command("show")
+def reports_show():
+    """Show the reports directory path."""
+    click.echo(f"\n📁  Reports directory : {REPORTS_DIR}")
+    if not REPORTS_DIR.exists():
+        click.echo("    (directory does not exist yet — run a profile to generate reports)\n")
+        return
+    files = list(REPORTS_DIR.glob("*.txt"))
+    click.echo(f"    {len(files)} report(s) saved\n")
+
+
+@reports.command("list")
+@click.option("--limit", "-l", default=None, type=int,
+              help="Maximum number of reports to show (default: all).")
+@click.option("--sort", default="date",
+              type=click.Choice(["date", "name", "size"]),
+              help="Sort order: date (newest first), name, or size (default: date).")
+def reports_list(limit, sort):
+    """List saved reports."""
+    rm = ReportManager()
+    items = rm.list_reports(limit=limit, sort_by=sort)
+    if not items:
+        click.echo("No reports found. Run a profile to generate one.")
+        return
+    header = f"\n{'FILENAME':<45} {'SIZE':>8}  {'DATE':<19}  PROFILE / SUITE"
+    click.echo(header)
+    click.echo("─" * len(header))
+    for r in items:
+        size_str = f"{r['size']:,} B" if r["size"] < 1024 else f"{r['size'] / 1024:.1f} KB"
+        ts_str = r["timestamp"].strftime("%Y-%m-%d %H:%M:%S") if r["timestamp"] else "unknown"
+        click.echo(f"{r['filename']:<45} {size_str:>8}  {ts_str:<19}  {r['name']}")
+    click.echo()
+
+
+@reports.command("open")
+def reports_open():
+    """Open the reports directory in the file explorer."""
+    if not REPORTS_DIR.exists():
+        click.echo("⚠️  Reports directory doesn't exist yet. Run a profile to generate reports.")
+        return
+    if sys.platform == "win32":
+        subprocess.Popen(["explorer", str(REPORTS_DIR)])
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", str(REPORTS_DIR)])
+    else:
+        subprocess.Popen(["xdg-open", str(REPORTS_DIR)])
+    click.echo(f"📂  Opened: {REPORTS_DIR}")
+
+
+@reports.command("view")
+@click.argument("name")
+def reports_view(name):
+    """Display the contents of a report.
+
+    NAME is the report filename (with or without .txt extension).
+    """
+    rm = ReportManager()
+    path = rm.find_report(name)
+    if path is None:
+        click.echo(f"❌  Report not found: '{name}'")
+        click.echo(f"    Use 'mcru reports list' to see available reports.")
+        return
+    click.echo(path.read_text())
+
+
+@reports.command("delete")
+@click.argument("names", nargs=-1, required=True)
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt.")
+def reports_delete(names, yes):
+    """Delete one or more reports by filename.
+
+    NAMES are report filenames (with or without .txt extension).
+    """
+    rm = ReportManager()
+    to_delete = []
+    for name in names:
+        path = rm.find_report(name)
+        if path is None:
+            click.echo(f"⚠️  Not found, skipping: '{name}'")
+        else:
+            to_delete.append(path)
+
+    if not to_delete:
+        click.echo("Nothing to delete.")
+        return
+
+    click.echo(f"Reports to delete ({len(to_delete)}):")
+    for p in to_delete:
+        click.echo(f"  {p.name}")
+
+    if not yes and not click.confirm("Delete these reports?"):
+        click.echo("Cancelled.")
+        return
+
+    total_freed = 0
+    for p in to_delete:
+        total_freed += p.stat().st_size
+        rm.delete_report(p)
+    freed_str = f"{total_freed / 1024:.1f} KB" if total_freed >= 1024 else f"{total_freed} B"
+    click.echo(f"🗑️  Deleted {len(to_delete)} report(s), freed {freed_str}.")
+
+
+@reports.command("search")
+@click.argument("query")
+def reports_search(query):
+    """Search reports by profile or suite name.
+
+    QUERY is a case-insensitive substring matched against the profile/suite name.
+    """
+    rm = ReportManager()
+    results = rm.search_reports(query)
+    if not results:
+        click.echo(f"No reports matching '{query}'.")
+        return
+    click.echo(f"\nFound {len(results)} report(s) matching '{query}':\n")
+    for r in results:
+        ts_str = r["timestamp"].strftime("%Y-%m-%d %H:%M:%S") if r["timestamp"] else "unknown"
+        size_str = f"{r['size'] / 1024:.1f} KB" if r["size"] >= 1024 else f"{r['size']} B"
+        click.echo(f"  {r['filename']}  ({size_str}, {ts_str})")
+    click.echo()
+
+
+@reports.command("prune")
+@click.option("--keep", default=None, type=int,
+              help="Keep only the N most recent reports; delete the rest.")
+@click.option("--older-than", "older_than", default=None, type=int, metavar="DAYS",
+              help="Delete reports older than DAYS days.")
+@click.option("--all", "delete_all", is_flag=True,
+              help="Delete all reports.")
+@click.option("--dry-run", is_flag=True,
+              help="Preview which reports would be deleted without deleting them.")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt.")
+def reports_prune(keep, older_than, delete_all, dry_run, yes):
+    """Delete old reports by age, count, or all.
+
+    Strategies can be combined: e.g. keep last 10 AND delete anything older than 60 days.
+
+    \b
+    Examples:
+      mcru reports prune --keep 10
+      mcru reports prune --older-than 30
+      mcru reports prune --keep 5 --older-than 90
+      mcru reports prune --all
+      mcru reports prune --keep 10 --dry-run
+    """
+    if not delete_all and keep is None and older_than is None:
+        click.echo("❌  Specify at least one option: --keep N, --older-than DAYS, or --all.")
+        click.echo("    Run 'mcru reports prune --help' for usage.")
+        return
+
+    rm = ReportManager()
+    result = rm.prune_reports(
+        keep_count=keep,
+        older_than_days=older_than,
+        delete_all=delete_all,
+        dry_run=True,  # always preview first
+    )
+
+    if not result["deleted"]:
+        click.echo("Nothing to prune — no reports match the given criteria.")
+        return
+
+    freed_str = (
+        f"{result['space_freed'] / 1024:.1f} KB"
+        if result["space_freed"] >= 1024
+        else f"{result['space_freed']} B"
+    )
+    label = "Would delete" if dry_run else "About to delete"
+    click.echo(f"{label} {len(result['deleted'])} report(s), freeing ~{freed_str}:")
+    for p in result["deleted"]:
+        click.echo(f"  {p.name}")
+
+    if dry_run:
+        click.echo("\n(Dry run — no files were deleted.)")
+        return
+
+    if not yes and not click.confirm("\nProceed with deletion?"):
+        click.echo("Cancelled.")
+        return
+
+    rm.prune_reports(
+        keep_count=keep,
+        older_than_days=older_than,
+        delete_all=delete_all,
+        dry_run=False,
+    )
+    click.echo(f"🗑️  Pruned {len(result['deleted'])} report(s), freed ~{freed_str}.")
 
 
 # ──────────────────────────────────────────────

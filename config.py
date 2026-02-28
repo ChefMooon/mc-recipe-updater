@@ -28,9 +28,10 @@ Each suite looks like:
 
 import json
 import os
+import re
 import shutil
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 CONFIG_DIR = Path.home() / ".mcru"
@@ -222,3 +223,109 @@ class ConfigManager:
         if candidate:
             return Path(candidate).expanduser().resolve()
         return DEFAULT_MAPPING_FILE
+
+
+# ──────────────────────────────────────────────
+# Report Manager
+# ──────────────────────────────────────────────
+
+REPORTS_DIR = Path.home() / ".mcru" / "reports"
+
+
+class ReportManager:
+    """Manages saved run reports in ~/.mcru/reports/."""
+
+    _FILENAME_PATTERN = re.compile(r"^(.+)_(\d{8}_\d{6})\.txt$")
+
+    @staticmethod
+    def _parse_report(path: Path) -> dict:
+        """Extract profile/suite name and timestamp from a report Path."""
+        match = ReportManager._FILENAME_PATTERN.match(path.name)
+        if match:
+            profile_name = match.group(1)
+            try:
+                timestamp = datetime.strptime(match.group(2), "%Y%m%d_%H%M%S")
+            except ValueError:
+                timestamp = None
+        else:
+            profile_name = path.stem
+            timestamp = None
+        size = path.stat().st_size if path.exists() else 0
+        return {
+            "path": path,
+            "name": profile_name,
+            "timestamp": timestamp,
+            "size": size,
+            "filename": path.name,
+        }
+
+    def list_reports(self, limit: int | None = None, sort_by: str = "date") -> list[dict]:
+        """Return report info dicts, sorted newest-first by default."""
+        if not REPORTS_DIR.exists():
+            return []
+        reports = [self._parse_report(p) for p in REPORTS_DIR.glob("*.txt")]
+        if sort_by == "name":
+            reports.sort(key=lambda r: (r["name"] or "").lower())
+        elif sort_by == "size":
+            reports.sort(key=lambda r: r["size"], reverse=True)
+        else:  # date (default)
+            reports.sort(key=lambda r: r["timestamp"] or datetime.min, reverse=True)
+        if limit is not None:
+            reports = reports[:limit]
+        return reports
+
+    def find_report(self, name: str) -> Path | None:
+        """Locate a report file by exact filename or stem. Returns Path or None."""
+        if not REPORTS_DIR.exists():
+            return None
+        # exact filename match
+        exact = REPORTS_DIR / name
+        if exact.exists():
+            return exact
+        # try adding .txt extension
+        with_ext = REPORTS_DIR / (name if name.endswith(".txt") else name + ".txt")
+        if with_ext.exists():
+            return with_ext
+        return None
+
+    def search_reports(self, query: str) -> list[dict]:
+        """Return reports whose profile/suite name contains query (case-insensitive)."""
+        q = query.lower()
+        return [r for r in self.list_reports() if q in (r["name"] or "").lower()]
+
+    def delete_report(self, path: Path) -> None:
+        """Delete a single report file."""
+        path.unlink()
+
+    def prune_reports(
+        self,
+        keep_count: int | None = None,
+        older_than_days: int | None = None,
+        delete_all: bool = False,
+        dry_run: bool = False,
+    ) -> dict:
+        """Delete reports by criteria. Strategies are additive (union). Returns summary."""
+        all_reports = self.list_reports()  # newest first
+        to_delete: set[Path] = set()
+
+        if delete_all:
+            to_delete = {r["path"] for r in all_reports}
+        else:
+            if keep_count is not None:
+                for r in all_reports[keep_count:]:
+                    to_delete.add(r["path"])
+            if older_than_days is not None:
+                cutoff = datetime.now() - timedelta(days=older_than_days)
+                for r in all_reports:
+                    if r["timestamp"] and r["timestamp"] < cutoff:
+                        to_delete.add(r["path"])
+
+        deleted: list[Path] = []
+        space_freed = 0
+        for path in sorted(to_delete, key=lambda p: p.name):
+            space_freed += path.stat().st_size if path.exists() else 0
+            if not dry_run:
+                path.unlink()
+            deleted.append(path)
+
+        return {"deleted": deleted, "space_freed": space_freed, "dry_run": dry_run}
