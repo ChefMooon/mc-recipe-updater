@@ -49,8 +49,18 @@ mcru quick ./src ./dist --dry-run
 | `mcru profile update <name> <src> <tgt>` | Edit a saved profile |
 | `mcru run <name>` | Run a profile or suite (`--dry-run` to preview) |
 | `mcru quick <src> <tgt>` | One-off sync without saving a profile |
-| `mcru suite ...` | Create and manage suites (ordered groups of profiles) |
-| `mcru config ...` | View, open, or reset the config directory |
+| `mcru suite add <name>` | Create a new suite |
+| `mcru suite list` | Show all suites |
+| `mcru suite show <name>` | Show details for a single suite |
+| `mcru suite add-profile <suite> <profile>` | Add a profile to a suite |
+| `mcru suite remove-profile <suite> <profile>` | Remove a profile from a suite |
+| `mcru suite reorder <suite> <profile> <pos>` | Reorder profiles in a suite |
+| `mcru suite update <name>` | Update a suite's description |
+| `mcru suite remove <name>` | Delete a suite |
+| `mcru config show` | Show config directory paths |
+| `mcru config open` | Open the config directory |
+| `mcru config reset-presets` | Reset mapping presets to defaults |
+| `mcru config reset` | Reset all configuration |
 
 ---
 

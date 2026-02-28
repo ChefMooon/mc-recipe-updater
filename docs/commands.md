@@ -4,6 +4,76 @@ Full flag and option reference for every `mcru` command.
 
 ---
 
+## Commands
+
+- **[Run](#mcru-run--run-a-profile-or-suite)** — Execute a saved profile or suite with optional overrides
+- **[Quick](#mcru-quick--one-off-run-without-saving-a-profile)** — One-off sync without saving a profile
+- **[Profile](#profile-commands)** — Save and manage folder sync profiles with source/target paths and options
+- **[Suite](#suite-commands)** — Create and manage ordered groups of profiles to run in sequence
+- **[Config](#config-commands)** — View, manage, and reset configuration files and presets
+
+## Common Flags
+
+| Flag | Description | Applies To |
+|------|-------------|-----------|
+| `-p, --parser <name>` | Content parser (repeatable) | `profile add` \| `profile update` \| `quick` |
+| `-d, --desc <text>` | Description text | `profile add` \| `profile update` \| `suite add` \| `suite update` |
+| `--mapping <preset>` | Mapping preset name | `profile add` \| `profile update` \| `run` \| `quick` |
+| `--dry-run` | Preview changes only | `run` \| `quick` |
+| `--source <path>` | Override source folder | `run` |
+| `--target <path>` | Override target folder | `run` |
+| `--no-report` | Skip saving report file | `run` |
+
+---
+
+## `mcru run` — Run a profile or suite
+
+```bash
+mcru run <name> [options]
+```
+
+Accepts a **profile name** or a **suite name** — profile lookup happens first, suite lookup second.
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Preview changes only, no files written |
+| `--no-report` | Skip saving the `.txt` report file |
+| `--source <path>` | Override source folder for this run only |
+| `--target <path>` | Override target folder for this run only |
+| `--mapping <preset>` | Override mapping preset for this run only |
+
+`--source`, `--target`, and `--mapping` apply to every profile when running a suite. Saved profile definitions are never modified.
+
+```bash
+mcru run myproject
+mcru run myproject --dry-run
+mcru run myproject --target /other/path
+mcru run full-sync --mapping mc-arch
+```
+
+---
+
+## `mcru quick` — One-off run without saving a profile
+
+```bash
+mcru quick <source> <target> [options]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Preview only |
+| `-p, --parser <name>` | Parser (repeatable) |
+| `--mapping <preset>` | Mapping preset name |
+
+```bash
+mcru quick ./src ./dist --dry-run
+mcru quick ./my-mod ./target-pack --mapping mc-arch
+```
+
+Quick runs do not save a report file.
+
+---
+
 ## Profile Commands
 
 ### `mcru profile add` — Save a new profile
@@ -67,54 +137,6 @@ Overwrites the saved profile (same options as `add`). The `created_at` timestamp
 | `-p, --parser <name>` | Parser (repeatable) |
 | `-d, --desc <text>` | Description |
 | `--mapping <preset>` | Mapping preset name |
-
----
-
-## `mcru run` — Run a profile or suite
-
-```bash
-mcru run <name> [options]
-```
-
-Accepts a **profile name** or a **suite name** — profile lookup happens first, suite lookup second.
-
-| Flag | Description |
-|------|-------------|
-| `--dry-run` | Preview changes only, no files written |
-| `--no-report` | Skip saving the `.txt` report file |
-| `--source <path>` | Override source folder for this run only |
-| `--target <path>` | Override target folder for this run only |
-| `--mapping <preset>` | Override mapping preset for this run only |
-
-`--source`, `--target`, and `--mapping` apply to every profile when running a suite. Saved profile definitions are never modified.
-
-```bash
-mcru run myproject
-mcru run myproject --dry-run
-mcru run myproject --target /other/path
-mcru run full-sync --mapping mc-arch
-```
-
----
-
-## `mcru quick` — One-off run without saving a profile
-
-```bash
-mcru quick <source> <target> [options]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--dry-run` | Preview only |
-| `-p, --parser <name>` | Parser (repeatable) |
-| `--mapping <preset>` | Mapping preset name |
-
-```bash
-mcru quick ./src ./dist --dry-run
-mcru quick ./my-mod ./target-pack --mapping mc-arch
-```
-
-Quick runs do not save a report file.
 
 ---
 
