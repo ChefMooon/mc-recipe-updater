@@ -12,7 +12,7 @@
   ConfigManager - Handles loading, saving, and managing sync profiles.
   
   Profiles are stored in a JSON file at:
-    ~/.foldersyncer/profiles.json
+    ~/.mcru/profiles.json
   
   Each profile looks like:
   {
@@ -81,7 +81,6 @@ This log exists so future investigations can check whether a similar issue was a
 3. **CLI Commands**
    - Update docstring in the command function
    - Update README.md with new command syntax
-   - Update docstring examples to match actual tool name (`mcru`, not `foldersyncer`)
 
 4. **Parser/Registry Changes**
    - Update parser docstrings in `registry.py`
@@ -97,4 +96,3 @@ This log exists so future investigations can check whether a similar issue was a
 ## Tool Names
 - **Package name**: `mc-recipe-updater`
 - **CLI command**: `mcru`
-- Never use old name `foldersyncer` in new code or docs
