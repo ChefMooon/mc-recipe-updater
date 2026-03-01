@@ -28,13 +28,14 @@ The tool supports two sync modes:
 ## Module Overview
 
 ```
-cli.py          Entry point. All Click commands live here.
-config.py       ConfigManager — reads/writes profiles, suites, and mapping presets.
-syncer.py       FolderSyncer — the diff + sync engine.
-reporter.py     Reporter / SuiteReporter — terminal output and .txt report files.
-registry.py     Parser registry — content transform functions (bytes → bytes).
+cli.py              Entry point. All Click commands live here (CLI only).
+config.py           ConfigManager — reads/writes profiles, suites, and mapping presets.
+syncer.py           FolderSyncer — the diff + sync engine.
+reporter.py         Reporter / SuiteReporter — terminal output and .txt report files.
+registry.py         Parser registry — content transform functions (bytes → bytes).
+tui/                TUI layer — interactive terminal interface (new, see below).
 mapping-presets.json  Bundled default mapping presets, seeded to ~/.mcru/ on first run.
-setup.py        Package definition, entry point registration.
+setup.py            Package definition, entry point registration (CLI & TUI).
 ```
 
 ---
@@ -274,7 +275,74 @@ They are applied in order in `FolderSyncer._hash_file()` before the MD5 is compu
 
 ---
 
-## Data Flow Diagram
+### `tui/` — TUI Layer (Interactive Terminal Interface)
+
+The TUI module provides an alternative interactive interface to the CLI, powered by [Textual](https://textualize.io/textual/).
+
+**Module structure:**
+```
+tui/
+├── __init__.py          Package marker
+├── main.py              Entry point: run() function
+├── app.py               MCRecipeApp — root Textual App class
+├── utils.py             ThreadedSyncer, formatting helpers
+├── screens/
+│   ├── __init__.py
+│   ├── home.py          Home screen with command navigation and ASCII art
+│   ├── profiles.py      Profile management (Phase 2)
+│   ├── suites.py        Suite management (Phase 3)
+│   ├── run_profile.py   Sync execution with progress (Phase 4)
+│   ├── reports.py       Report viewing (Phase 5)
+│   └── config.py        Configuration screen (Phase 6)
+└── widgets/
+    ├── __init__.py
+    ├── result_table.py  Sync results display (Phase 4)
+    ├── progress_spinner.py  Async progress indicator (Phase 4)
+    └── profile_selector.py  Profile dropdown (Phase 2)
+```
+
+**Key architecture decisions:**
+
+1. **Reuse of business logic** — All TUI screens use the same `ConfigManager`, `FolderSyncer`, and `Reporter` classes as the CLI. No duplication of core functionality.
+
+2. **Threading for responsiveness** — `ThreadedSyncer` in `utils.py` wraps sync operations in background threads. Textual's message system ensures thread-safe UI updates.
+
+3. **Screen-based navigation** — Each major feature (profiles, suites, run, reports, config) is a Textual `Screen`. The `MCRecipeApp` manages screen stacks with `push_screen()` / `pop_screen()`.
+
+4. **Entry point** — Registered in `setup.py` as `mcru-tui=tui.main:run`. Launches the root `MCRecipeApp`.
+
+**Threading model:**
+
+```
+TUI Screen (main thread)
+  ↓
+  User clicks "Run Sync"
+  ↓
+  ThreadedSyncer.start() → spawns background thread
+  ↓
+  Background thread calls FolderSyncer.run()
+  ↓
+  Results posted to Textual message queue
+  ↓
+  Main thread updates UI (progress bar, result summary)
+```
+
+**Comparison: CLI vs TUI data flow**
+
+| Aspect | CLI (`cli.py`) | TUI (`tui/`) |
+|--------|---|---|
+| Entry point | Click group commands | Textual App |
+| Profile loading | Click command handler | Screen initialization |
+| Config access | ConfigManager | ConfigManager (shared) |
+| Sync execution | Synchronous (blocks terminal) | Async thread (responsive UI) |
+| Output | Text + colored terminal | Widgets + color scheme |
+| Report persistence | Reporter writes `.txt` | Reporter writes `.txt` (shared) |
+
+For detailed TUI-specific documentation, see [docs/tui.md](../tui.md).
+
+---
+
+## Data Flow Diagram (CLI)
 
 ```mermaid
 flowchart TD

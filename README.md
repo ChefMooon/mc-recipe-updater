@@ -3,7 +3,11 @@
 A terminal tool to compare and sync folders using saved profiles.  
 Source is always treated as the **correct version**. Target is brought in line with it.
 
-> **Docs:** [Architecture & full reference](docs/architecture.md) · [Command Reference](docs/commands.md) · [Folder Mapping](docs/folder-mapping.md) · [Suites](docs/suites.md) · [Reports](docs/reports.md)
+Available in two modes:
+- **CLI** (`mcru`) — command-line interface for scripting and automation
+- **TUI** (`mcru-tui`) — interactive terminal UI with ASCII art and menu-driven navigation
+
+> **Docs:** [Architecture & full reference](docs/architecture.md) · [TUI Reference](docs/tui.md) · [Command Reference](docs/commands.md) · [Folder Mapping](docs/folder-mapping.md) · [Suites](docs/suites.md) · [Reports](docs/reports.md)
 
 ---
 
@@ -14,15 +18,47 @@ cd mc-recipe-updater
 pip install -e .
 ```
 
-After this, `mcru` is available as a terminal command from anywhere.
+After this, both `mcru` and `mcru-tui` are available as terminal commands from anywhere.
 
 ---
 
-## Quick Start
+## Getting Started
+
+### CLI Mode (Command Line)
 
 ```bash
-# Save a profile
-mcru profile add myproject ./src ./dist
+mcru --help          # View all CLI commands
+```
+
+### TUI Mode (Interactive)
+
+```bash
+mcru-tui             # Launch the interactive terminal UI
+```
+
+The TUI provides:
+- Animated home screen with command navigation
+- Profile, suite, and run management
+- Real-time sync progress and results
+- ReLI Commands
+
+> Full flag and option reference: [docs/commands.md](docs/commands.md)
+
+| Command | Description |
+|---------|-------------|
+| `mcru run <name>` | Run a profile or suite (`--dry-run` to preview) |
+| `mcru quick <src> <tgt>` | One-off sync without saving a profile |
+| `mcru profile ...` | Create and manage sync profiles |
+| `mcru suite ...` | Create and manage suites |
+| `mcru config ...` | View, open, or reset the config directory |
+| `mcru reports ...` | List, view, search, and prune saved run reports |
+
+## Entry Points
+
+| Command | Interface | Use Case |
+|---------|-----------|----------|
+| `mcru` | CLI | Scripting, automation, headless environments |
+| `mcru-tui` | TUI | Interactive use, guided workflows, visual feedback
 
 # Run it
 mcru run myproject
@@ -102,11 +138,16 @@ All user data lives under `~/.mcru/`, created automatically on first run.
 
 > `mapping-presets.json` is copied from the package defaults only once — upgrades never overwrite your local copy.  
 > To reset presets: `mcru config reset-presets`  
-> To reset everything: `mcru config reset`
-
----
-
-## Architecture
+> To reset ev   Command layer — all user-facing Click commands
+config.py       ConfigManager — reads/writes profiles, suites, presets
+syncer.py       FolderSyncer — MD5-based diff + sync engine
+reporter.py     Reporter / SuiteReporter — terminal output and .txt reports
+registry.py     Parser registry — pluggable content transforms (bytes to bytes)
+tui/            TUI layer — interactive terminal interface (Textual)
+  app.py          Main TUI application
+  screens/        Individual UI screens (profiles, suites, sync, reports, config)
+  widgets/        Reusable TUI components
+  utils.py        Threading and formatting utilities
 
 ```
 cli.py       Command layer — all user-facing Click commands
