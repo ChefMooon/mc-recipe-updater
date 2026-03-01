@@ -18,9 +18,9 @@ Sync operations performed:
 
 The tool supports two sync modes:
 
-| Mode | Description |
-|------|-------------|
-| **Default** | Direct path-mirroring. `source/foo/bar.json` → `target/foo/bar.json` |
+| Mode        | Description                                                                                                                                     |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Default** | Direct path-mirroring. `source/foo/bar.json` → `target/foo/bar.json`                                                                            |
 | **Mapping** | Category-aware routing. Source folders are categorised (e.g. `common`, `fabric`, `forge`) and files are placed into mapped target root folders. |
 
 ---
@@ -77,12 +77,12 @@ Responsible for all read/write access to the `~/.mcru/` directory.
 
 **Key constants:**
 
-| Constant | Value |
-|----------|-------|
-| `CONFIG_DIR` | `~/.mcru/` |
-| `CONFIG_FILE` | `~/.mcru/profiles.json` |
-| `SUITES_FILE` | `~/.mcru/suites.json` |
-| `DEFAULT_MAPPING_FILE` | `~/.mcru/mapping-presets.json` |
+| Constant               | Value                                |
+| ---------------------- | ------------------------------------ |
+| `CONFIG_DIR`           | `~/.mcru/`                           |
+| `CONFIG_FILE`          | `~/.mcru/profiles.json`              |
+| `SUITES_FILE`          | `~/.mcru/suites.json`                |
+| `DEFAULT_MAPPING_FILE` | `~/.mcru/mapping-presets.json`       |
 | `BUNDLED_MAPPING_FILE` | `<package_dir>/mapping-presets.json` |
 
 **Profile schema:**
@@ -205,9 +205,9 @@ Parsers are applied before hashing, so content normalisation does not produce fa
 
 **Classes:**
 
-| Class | Purpose |
-|-------|---------|
-| `Reporter` | Single-profile terminal summary + `.txt` file |
+| Class           | Purpose                                               |
+| --------------- | ----------------------------------------------------- |
+| `Reporter`      | Single-profile terminal summary + `.txt` file         |
 | `SuiteReporter` | Multi-profile terminal summary + combined `.txt` file |
 
 **Terminal output:** Uses `click.style()` for colour-coded output:
@@ -247,11 +247,11 @@ They are applied in order in `FolderSyncer._hash_file()` before the MD5 is compu
 
 **Built-in parsers:**
 
-| Name | Function | What it does |
-|------|----------|--------------|
-| `strip_bom` | `strip_bom(content)` | Removes UTF-8 BOM (`\xef\xbb\xbf`) from the start of the file |
-| `normalize_line_endings` | `normalize_line_endings(content)` | Converts `\r\n` and `\r` to `\n` |
-| `strip_trailing_whitespace` | `strip_trailing_whitespace(content)` | Strips trailing whitespace from each line |
+| Name                        | Function                             | What it does                                                  |
+| --------------------------- | ------------------------------------ | ------------------------------------------------------------- |
+| `strip_bom`                 | `strip_bom(content)`                 | Removes UTF-8 BOM (`\xef\xbb\xbf`) from the start of the file |
+| `normalize_line_endings`    | `normalize_line_endings(content)`    | Converts `\r\n` and `\r` to `\n`                              |
+| `strip_trailing_whitespace` | `strip_trailing_whitespace(content)` | Strips trailing whitespace from each line                     |
 
 > Note: `lowercase_names` is shown as a parser option in CLI help text but is not currently implemented in the registry — it is listed for future use.
 
@@ -276,27 +276,41 @@ They are applied in order in `FolderSyncer._hash_file()` before the MD5 is compu
 
 ## Data Flow Diagram
 
-```
-mcru run <name>
-      │
-      ▼
-  ConfigManager
-  ├── load profile (profiles.json)
-  ├── resolve mapping preset (mapping-presets.json)  [if set]
-  └── apply run-time overrides (--source / --target / --mapping)
-      │
-      ▼
-  FolderSyncer(config, dry_run)
-  ├── _scan(source), _scan(target)
-  ├── _hash_file() via registry parsers
-  ├── _build_source_target_map()  [mapping mode]
-  ├── compute: to_add / to_update / to_remove / unchanged
-  └── apply file operations (copy / unlink)  [unless dry_run]
-      │
-      ▼
-  Reporter / SuiteReporter
-  ├── print_summary() → terminal (colour-coded)
-  └── save_report()   → ~/.mcru/reports/<name>_TIMESTAMP.txt
+```mermaid
+flowchart TD
+    CMD(["mcru run &lt;name&gt;"])
+
+    subgraph CM["ConfigManager"]
+        CM1["Load profile\n(profiles.json)"]
+        CM2["Resolve mapping preset\n(mapping-presets.json)"]
+        CM3["Apply run-time overrides\n(--source / --target / --mapping)"]
+        CM1 --> CM2 --> CM3
+    end
+
+    subgraph FS["FolderSyncer(config, dry_run)"]
+        FS1["_scan(source) + _scan(target)"]
+        FS2["_hash_file() via registry parsers"]
+        FS3{"Mapping\nmode?"}
+        FS4["_build_source_target_map()"]
+        FS5["Compute: to_add / to_update\n/ to_remove / unchanged"]
+        FS6["Apply file operations\n(copy / unlink)"]
+        FS7(["dry_run — skip writes"])
+
+        FS1 --> FS2 --> FS3
+        FS3 -- yes --> FS4 --> FS5
+        FS3 -- no --> FS5
+        FS5 --> FS6
+        FS6 -. dry_run=True .-> FS7
+    end
+
+    subgraph RP["Reporter / SuiteReporter"]
+        RP1["print_summary()\n→ terminal (colour-coded)"]
+        RP2["save_report()\n→ ~/.mcru/reports/&lt;name&gt;_TIMESTAMP.txt"]
+    end
+
+    CMD --> CM
+    CM --> FS
+    FS --> RP
 ```
 
 ---
@@ -358,14 +372,14 @@ pyinstaller --onefile cli.py --name mcru
 
 ### Profile Commands
 
-| Command | Description |
-|---------|-------------|
-| `mcru add <name> <src> <tgt> [opts]` | Save a new sync profile |
-| `mcru list` | List all saved profiles |
-| `mcru remove <name>` | Delete a profile |
-| `mcru update <name> <src> <tgt> [opts]` | Overwrite an existing profile |
-| `mcru run <name> [opts]` | Run a profile (or suite) |
-| `mcru quick <src> <tgt> [opts]` | One-off run without saving a profile |
+| Command                                 | Description                          |
+| --------------------------------------- | ------------------------------------ |
+| `mcru add <name> <src> <tgt> [opts]`    | Save a new sync profile              |
+| `mcru list`                             | List all saved profiles              |
+| `mcru remove <name>`                    | Delete a profile                     |
+| `mcru update <name> <src> <tgt> [opts]` | Overwrite an existing profile        |
+| `mcru run <name> [opts]`                | Run a profile (or suite)             |
+| `mcru quick <src> <tgt> [opts]`         | One-off run without saving a profile |
 
 **`add` / `update` options:**
 - `-p / --parser` — parser name (repeatable): `strip_bom`, `normalize_line_endings`, `lowercase_names`
@@ -383,16 +397,16 @@ pyinstaller --onefile cli.py --name mcru
 
 ### Suite Commands
 
-| Command | Description |
-|---------|-------------|
-| `mcru suite add <name> [-d desc]` | Create an empty suite |
-| `mcru suite remove <name>` | Delete a suite (profiles unaffected) |
-| `mcru suite update <name> -d <desc>` | Update suite description |
-| `mcru suite list` | List all suites |
-| `mcru suite show <name>` | Show ordered profile list for a suite |
-| `mcru suite add-profile <suite> <profile>` | Append a profile to a suite |
-| `mcru suite remove-profile <suite> <profile>` | Remove a profile from a suite |
-| `mcru suite reorder <suite> <profile> <pos>` | Move a profile to a 1-based position |
+| Command                                       | Description                           |
+| --------------------------------------------- | ------------------------------------- |
+| `mcru suite add <name> [-d desc]`             | Create an empty suite                 |
+| `mcru suite remove <name>`                    | Delete a suite (profiles unaffected)  |
+| `mcru suite update <name> -d <desc>`          | Update suite description              |
+| `mcru suite list`                             | List all suites                       |
+| `mcru suite show <name>`                      | Show ordered profile list for a suite |
+| `mcru suite add-profile <suite> <profile>`    | Append a profile to a suite           |
+| `mcru suite remove-profile <suite> <profile>` | Remove a profile from a suite         |
+| `mcru suite reorder <suite> <profile> <pos>`  | Move a profile to a 1-based position  |
 
 See [suites.md](suites.md) for detailed suite documentation.
 
@@ -400,12 +414,12 @@ See [suites.md](suites.md) for detailed suite documentation.
 
 ### Config Commands
 
-| Command | Description |
-|---------|-------------|
-| `mcru config show` | Print paths of all config files |
-| `mcru config open` | Open `~/.mcru/` in the file explorer |
+| Command                     | Description                                          |
+| --------------------------- | ---------------------------------------------------- |
+| `mcru config show`          | Print paths of all config files                      |
+| `mcru config open`          | Open `~/.mcru/` in the file explorer                 |
 | `mcru config reset-presets` | Re-seed `mapping-presets.json` from package defaults |
-| `mcru config reset` | Delete all `~/.mcru/` data and re-initialise |
+| `mcru config reset`         | Delete all `~/.mcru/` data and re-initialise         |
 
 ---
 
@@ -415,38 +429,38 @@ See [folder-mapping.md](folder-mapping.md) for the full mapping documentation.
 
 ### Preset schema keys
 
-| Key | Type | Description |
-|-----|------|-------------|
-| `description` | string | Human-readable description |
+| Key            | Type   | Description                                                   |
+| -------------- | ------ | ------------------------------------------------------------- |
+| `description`  | string | Human-readable description                                    |
 | `source_roots` | object | Maps category name → glob pattern(s) or `{candidates: [...]}` |
-| `target_roots` | object | Maps category name → target root folder string |
-| `category_map` | object | Maps source category → target category |
-| `omit_globs` | array | Glob patterns; matched source files/folders are skipped |
-| `rules` | object | Behaviour flags (see below) |
+| `target_roots` | object | Maps category name → target root folder string                |
+| `category_map` | object | Maps source category → target category                        |
+| `omit_globs`   | array  | Glob patterns; matched source files/folders are skipped       |
+| `rules`        | object | Behaviour flags (see below)                                   |
 
 ### `rules` flags
 
-| Key | Value | Behaviour |
-|-----|-------|-----------|
+| Key                   | Value                 | Behaviour                                                          |
+| --------------------- | --------------------- | ------------------------------------------------------------------ |
 | `forge_like_conflict` | `"error_if_multiple"` | Error if both forge and neoforge candidates resolve simultaneously |
-| `delete_mode` | `"global_target"` | Target files not present in any mapped source are deleted |
+| `delete_mode`         | `"global_target"`     | Target files not present in any mapped source are deleted          |
 
 ### Bundled presets
 
-| Preset | Description |
-|--------|-------------|
-| `mc-arch` | Maps `common/fabric/forge_like` source to `core/fabric/forge` target folders |
+| Preset                  | Description                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------------- |
+| `mc-arch`               | Maps `common/fabric/forge_like` source to `core/fabric/forge` target folders                      |
 | `mc-arch-recipes-split` | Variant: nested `recipes/core`, `recipes/fabric`, `recipes/forge` targets with example omit globs |
 
 ---
 
 ## Error Handling
 
-| Scenario | Behaviour |
-|----------|-----------|
-| Source directory not found | `FileNotFoundError` raised before any sync begins |
-| Mapping preset not found | Error printed, command exits cleanly |
-| Forge + neoforge both present | Error if `forge_like_conflict: error_if_multiple` |
-| Two source files map to same target | `ValueError` raised with both conflicting paths named |
-| Profile not found in suite | Profile is skipped with a warning; remaining profiles continue |
-| File copy/delete failure | Error recorded in results `errors` list; shown in report |
+| Scenario                            | Behaviour                                                      |
+| ----------------------------------- | -------------------------------------------------------------- |
+| Source directory not found          | `FileNotFoundError` raised before any sync begins              |
+| Mapping preset not found            | Error printed, command exits cleanly                           |
+| Forge + neoforge both present       | Error if `forge_like_conflict: error_if_multiple`              |
+| Two source files map to same target | `ValueError` raised with both conflicting paths named          |
+| Profile not found in suite          | Profile is skipped with a warning; remaining profiles continue |
+| File copy/delete failure            | Error recorded in results `errors` list; shown in report       |

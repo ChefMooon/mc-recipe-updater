@@ -1,6 +1,5 @@
 # Virtual environment
 venv/
-.venv/
 
 # Python package metadata
 *.egg-info/
