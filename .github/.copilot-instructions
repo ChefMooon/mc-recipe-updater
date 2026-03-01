@@ -1,5 +1,15 @@
 # MC-Recipe-Updater Development Guidelines
 
+## Testing and Debugging
+
+### Validating Changes
+*always test in `venv`*
+- When a test is needed:
+  - venv\Scripts\activate
+  - pip install -e .
+- Run the `mcru` command with `--help` to check for syntax errors
+- Use `mcru <command> --help` to check for correct argument parsing
+
 ## Code Style & Comments
 
 ### Module Docstrings

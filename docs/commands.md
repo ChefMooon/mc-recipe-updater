@@ -97,6 +97,7 @@ See [profiles.md](profiles.md) for a full guide including profile schema, report
 | `mcru profile add <name> <source> <target>` | Save a new profile |
 | `mcru profile list` | List all saved profiles |
 | `mcru profile show <name>` | Inspect a single profile |
+| `mcru profile verify <name>` | Validate that source and target folders exist |
 | `mcru profile remove <name>` | Delete a profile |
 | `mcru profile update <name> <source> <target>` | Overwrite a saved profile |
 
@@ -139,6 +140,30 @@ mcru profile show <name>
 ```
 
 Prints all details for the named profile: source, target, parsers, mapping preset, and creation timestamp.
+
+---
+
+### `mcru profile verify` — Validate profile paths
+
+```bash
+mcru profile verify <name>
+```
+
+Verifies that the source and target folders configured in the profile actually exist. Useful before running a profile to catch path issues early.
+
+```bash
+mcru profile verify myproject
+```
+
+Output example:
+```
+Profile: myproject
+────────────────────────────────────
+✅  Source: /home/user/src
+✅  Target: /home/user/dist
+
+✅  Profile 'myproject' is valid.
+```
 
 ---
 

@@ -7,6 +7,7 @@ Usage:
     mcru profile add <name> <src> <tgt>   # Save a new profile
     mcru profile list                     # List all saved profiles
     mcru profile show <name>              # Show details for a single profile
+    mcru profile verify <name>            # Verify that source and target folders exist
     mcru profile remove <name>            # Remove a profile
     mcru profile update <name> <src> <tgt># Edit a saved profile
     mcru run <profile> --dry-run          # Preview without making changes
@@ -488,6 +489,39 @@ def profile_set(name, description, mapping, target_changelog, parser, source, ta
         click.echo(f"    • {change}")
 
 
+@profile.command("verify")
+@click.argument("name")
+def profile_verify(name):
+    """Verify that a profile's source and target folders exist."""
+    cm = ConfigManager()
+    p = cm.get_profile(name)
+    if p is None:
+        click.echo(f"❌  Profile '{name}' not found.")
+        return
+    
+    source_path = Path(p['source'])
+    target_path = Path(p['target'])
+    source_exists = source_path.exists()
+    target_exists = target_path.exists()
+    
+    click.echo(f"\nProfile: {p['name']}")
+    click.echo("─" * 40)
+    source_icon = "✅" if source_exists else "❌"
+    target_icon = "✅" if target_exists else "❌"
+    click.echo(f"{source_icon}  Source: {p['source']}")
+    click.echo(f"{target_icon}  Target: {p['target']}")
+    
+    if source_exists and target_exists:
+        click.echo(f"\n✅  Profile '{name}' is valid.")
+    else:
+        click.echo(f"\n⚠️  Profile '{name}' has missing folders.")
+        if not source_exists:
+            click.echo(f"    Source folder does not exist: {p['source']}")
+        if not target_exists:
+            click.echo(f"    Target folder does not exist: {p['target']}")
+    click.echo()
+
+
 # ──────────────────────────────────────────────
 # Run a Sync Job
 # ──────────────────────────────────────────────
@@ -538,6 +572,16 @@ def run(profile, dry_run, no_report, source, target, mapping, target_changelog):
                 pcfg["source"] = source
             if target:
                 pcfg["target"] = target
+
+            # Validate source and target folders exist
+            source_path = Path(pcfg["source"])
+            target_path = Path(pcfg["target"])
+            if not source_path.exists():
+                click.echo(f"  ❌  {pname}: Source folder does not exist: {pcfg['source']} — skipping.")
+                continue
+            if not target_path.exists():
+                click.echo(f"  ❌  {pname}: Target folder does not exist: {pcfg['target']} — skipping.")
+                continue
 
             active_mapping = mapping or pcfg.get("mapping_preset")
             if active_mapping:
@@ -613,6 +657,16 @@ def run(profile, dry_run, no_report, source, target, mapping, target_changelog):
         click.echo("    Mode   : DRY RUN (no changes will be made)\n")
     else:
         click.echo("    Mode   : LIVE\n")
+
+    # Validate source and target folders exist
+    source_path = Path(config["source"])
+    target_path = Path(config["target"])
+    if not source_path.exists():
+        click.echo(f"❌  Source folder does not exist: {config['source']}")
+        return
+    if not target_path.exists():
+        click.echo(f"❌  Target folder does not exist: {config['target']}")
+        return
 
     syncer = FolderSyncer(config, dry_run=dry_run)
     try:
