@@ -16,6 +16,7 @@ setup(
             # TUI: mcru-tui for interactive mode
             "mcru=cli:cli",
             "mcru-tui=tui.main:run",
+            "mcrui=tui.main:run",  # Alias for TUI
         ],
     },
     python_requires=">=3.10",

@@ -30,7 +30,7 @@ The tool supports two sync modes:
 ```
 cli.py              Entry point. All Click commands live here (CLI only).
 config.py           ConfigManager — reads/writes profiles, suites, and mapping presets.
-syncer.py           FolderSyncer — the diff + sync engine.
+syncer.py           MCRU — the diff + sync engine.
 reporter.py         Reporter / SuiteReporter — terminal output and .txt report files.
 registry.py         Parser registry — content transform functions (bytes → bytes).
 tui/                TUI layer — interactive terminal interface (new, see below).
@@ -55,7 +55,7 @@ Built with [Click](https://click.palletsprojects.com/). Defines all user-facing 
 1. Looks up the argument as a **profile** first.  
 2. If the profile is not found, looks it up as a **suite**.  
 3. Runs the appropriate path (single profile or sequential suite iteration).  
-4. Passes runtime overrides (`--source`, `--target`, `--mapping`) into the config dict before passing to `FolderSyncer`. The saved profile is never mutated.
+4. Passes runtime overrides (`--source`, `--target`, `--mapping`) into the config dict before passing to `MCRU`. The saved profile is never mutated.
 
 **Mapping resolution order in `run` / `quick`:**  
 1. `--mapping` CLI flag (highest priority)
@@ -127,9 +127,9 @@ Responsible for all read/write access to the `~/.mcru/` directory.
 
 ### `syncer.py` — Diff and Sync Engine
 
-**Class:** `FolderSyncer(config: dict, dry_run: bool)`
+**Class:** `MCRU(config: dict, dry_run: bool)`
 
-The config dict accepted by `FolderSyncer`:
+The config dict accepted by `MCRU`:
 
 ```python
 {
@@ -143,7 +143,7 @@ The config dict accepted by `FolderSyncer`:
 **`run()` dispatch:**
 
 ```
-FolderSyncer.run()
+MCRU.run()
   ├── mapping is set  → _run_with_mapping()
   └── no mapping      → _run_default()
 ```
@@ -244,7 +244,7 @@ Errors   : N
 ### `registry.py` — Parser Registry
 
 Parsers are pure functions with signature `(bytes) -> bytes`.  
-They are applied in order in `FolderSyncer._hash_file()` before the MD5 is computed.
+They are applied in order in `MCRU._hash_file()` before the MD5 is computed.
 
 **Built-in parsers:**
 
@@ -303,7 +303,7 @@ tui/
 
 **Key architecture decisions:**
 
-1. **Reuse of business logic** — All TUI screens use the same `ConfigManager`, `FolderSyncer`, and `Reporter` classes as the CLI. No duplication of core functionality.
+1. **Reuse of business logic** — All TUI screens use the same `ConfigManager`, `MCRU`, and `Reporter` classes as the CLI. No duplication of core functionality.
 
 2. **Threading for responsiveness** — `ThreadedSyncer` in `utils.py` wraps sync operations in background threads. Textual's message system ensures thread-safe UI updates.
 
@@ -320,7 +320,7 @@ TUI Screen (main thread)
   ↓
   ThreadedSyncer.start() → spawns background thread
   ↓
-  Background thread calls FolderSyncer.run()
+  Background thread calls MCRU.run()
   ↓
   Results posted to Textual message queue
   ↓
@@ -355,7 +355,7 @@ flowchart TD
         CM1 --> CM2 --> CM3
     end
 
-    subgraph FS["FolderSyncer(config, dry_run)"]
+    subgraph FS["MCRU(config, dry_run)"]
         FS1["_scan(source) + _scan(target)"]
         FS2["_hash_file() via registry parsers"]
         FS3{"Mapping\nmode?"}

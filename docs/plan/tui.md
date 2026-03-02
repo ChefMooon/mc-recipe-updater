@@ -6,7 +6,7 @@
 
 ## Overview
 
-Add a parallel TUI entry point (`mcru-tui`) powered by [Textual](https://github.com/Textualize/textual) that provides full feature parity with the CLI. The TUI will feature an interactive home screen with ASCII art and command navigation, with arrow-key driven menus that launch into detailed management screens. Core business logic (ConfigManager, FolderSyncer, Reporter) will be reused; sync operations will run in background threads for UI responsiveness. All existing CLI functionality remains unchanged.
+Add a parallel TUI entry point (`mcru-tui`) powered by [Textual](https://github.com/Textualize/textual) that provides full feature parity with the CLI. The TUI will feature an interactive home screen with ASCII art and command navigation, with arrow-key driven menus that launch into detailed management screens. Core business logic (ConfigManager, MCRU, Reporter) will be reused; sync operations will run in background threads for UI responsiveness. All existing CLI functionality remains unchanged.
 
 ---
 
@@ -16,7 +16,7 @@ Add a parallel TUI entry point (`mcru-tui`) powered by [Textual](https://github.
 - **Threading model** — background threads for sync operations keep UI responsive; thread-safe message passing via Textual's callback system
 - **Home screen design** — ASCII art with animated title + command menu for quick navigation
 - **Code organization** — new `tui/` module keeps TUI code isolated from CLI
-- **Business logic reuse** — ConfigManager, FolderSyncer, Reporter remain unchanged; TUI is purely a presentation layer
+- **Business logic reuse** — ConfigManager, MCRU, Reporter remain unchanged; TUI is purely a presentation layer
 - **Documentation** — separate `docs/tui.md` for TUI-specific details
 
 ---
@@ -123,7 +123,7 @@ Each screen should have a "Back" button or `Escape` key to return to home.
 
 **File:** `tui/utils.py`
 
-- `ThreadedSyncer` class that wraps `FolderSyncer.run()`
+- `ThreadedSyncer` class that wraps `MCRU.run()`
 - Emits progress callbacks that post to Textual's message queue
 - Example callback signature: `on_progress(current_file: int, total_files: int, current_operation: str)`
 - Exception handling and result delivery back to main thread

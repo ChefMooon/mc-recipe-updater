@@ -19,7 +19,7 @@ from pathlib import Path
 from registry import get_parser
 
 
-class FolderSyncer:
+class MCRU:
     # Files at the root of the target that are never removed, regardless of source contents.
     # CHANGELOG.md is tool-managed and must not be deleted between runs.
     TARGET_PROTECTED_FILES = {"CHANGELOG.md"}

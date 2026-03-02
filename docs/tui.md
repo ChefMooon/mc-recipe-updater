@@ -199,7 +199,7 @@ Main thread (Textual event loop)
   ├─ Renders UI
   └─ Receives messages from background threads
 
-Background thread (FolderSyncer)
+Background thread (MCRU)
   ├─ Runs syncer.run() (can take seconds/minutes)
   ├─ Posts progress callbacks
   └─ Posts completion with results

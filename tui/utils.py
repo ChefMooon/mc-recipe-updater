@@ -7,12 +7,12 @@ and helper functions for formatting output.
 
 import threading
 from typing import Callable, Any, Optional
-from syncer import FolderSyncer
+from syncer import MCRU
 
 
 class ThreadedSyncer:
     """
-    Wrapper around FolderSyncer that runs sync in a background thread.
+    Wrapper around MCRU that runs sync in a background thread.
     
     Allows TUI to remain responsive while sync operations execute.
     Posts progress updates and final results via callback.
@@ -50,8 +50,8 @@ class ThreadedSyncer:
     def _run_sync(self) -> None:
         """Internal: run sync and post result."""
         try:
-            syncer = FolderSyncer(self.config, dry_run=self.dry_run)
-            self.results = syncer.run()
+            mcru = MCRU(self.config, dry_run=self.dry_run)
+            self.results = mcru.run()
             self.on_complete(self.results, None)
         except Exception as e:
             self.error = e

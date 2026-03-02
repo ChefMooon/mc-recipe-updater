@@ -31,7 +31,7 @@ import sys
 import shutil
 from pathlib import Path
 from config import ConfigManager, ReportManager, CONFIG_DIR, CONFIG_FILE, SUITES_FILE, DEFAULT_MAPPING_FILE, BUNDLED_MAPPING_FILE
-from syncer import FolderSyncer
+from syncer import MCRU
 from reporter import Reporter, SuiteReporter, TargetChangelogWriter, REPORTS_DIR
 
 
@@ -598,9 +598,9 @@ def run(profile, dry_run, no_report, source, target, mapping, target_changelog):
             if pcfg.get("mapping_preset"):
                 click.echo(f"     Mapping: {pcfg['mapping_preset']}")
 
-            syncer = FolderSyncer(pcfg, dry_run=dry_run)
+            mcru = MCRU(pcfg, dry_run=dry_run)
             try:
-                results = syncer.run()
+                results = mcru.run()
             except ValueError as err:
                 click.echo(f"  ❌  {pname}: {err} — skipping.")
                 continue
@@ -668,9 +668,9 @@ def run(profile, dry_run, no_report, source, target, mapping, target_changelog):
         click.echo(f"❌  Target folder does not exist: {config['target']}")
         return
 
-    syncer = FolderSyncer(config, dry_run=dry_run)
+    mcru = MCRU(config, dry_run=dry_run)
     try:
-        results = syncer.run()
+        results = mcru.run()
     except ValueError as err:
         click.echo(f"❌  {err}")
         return
@@ -856,9 +856,9 @@ def quick(source, target, dry_run, parser, mapping):
             click.echo(f"❌  {err}")
             return
 
-    syncer = FolderSyncer(config, dry_run=dry_run)
+    mcru = MCRU(config, dry_run=dry_run)
     try:
-        results = syncer.run()
+        results = mcru.run()
     except ValueError as err:
         click.echo(f"❌  {err}")
         return

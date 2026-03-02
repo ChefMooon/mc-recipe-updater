@@ -140,7 +140,7 @@ All user data lives under `~/.mcru/`, created automatically on first run.
 > To reset presets: `mcru config reset-presets`  
 > To reset ev   Command layer — all user-facing Click commands
 config.py       ConfigManager — reads/writes profiles, suites, presets
-syncer.py       FolderSyncer — MD5-based diff + sync engine
+syncer.py       MCRU — MD5-based diff + sync engine
 reporter.py     Reporter / SuiteReporter — terminal output and .txt reports
 registry.py     Parser registry — pluggable content transforms (bytes to bytes)
 tui/            TUI layer — interactive terminal interface (Textual)
@@ -152,7 +152,7 @@ tui/            TUI layer — interactive terminal interface (Textual)
 ```
 cli.py       Command layer — all user-facing Click commands
 config.py    ConfigManager — reads/writes profiles, suites, presets
-syncer.py    FolderSyncer — MD5-based diff + sync engine
+syncer.py    MCRU — MD5-based diff + sync engine
 reporter.py  Reporter / SuiteReporter — terminal output and .txt reports
 registry.py  Parser registry — pluggable content transforms (bytes to bytes)
 ```
