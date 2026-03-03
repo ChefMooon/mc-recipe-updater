@@ -141,9 +141,18 @@ class HomeScreen(Screen):
         Binding("down", "select_down", "Down", show=False),
         Binding("enter", "select_command", "Select", show=False),
         Binding("tab", "autocomplete", "Autocomplete", show=False),
-        Binding("ctrl+c", "quit", "Quit", show=False),
+        Binding("ctrl+c", "force_quit", "Force Quit", show=False),
         ("q", "quit", "Quit"),
     ]
+
+    def action_force_quit(self) -> None:
+        """Immediately exit the app on Ctrl+C."""
+        self.app.exit()
+
+    async def on_key(self, event) -> None:
+        # Ensure KeyboardInterrupt (Ctrl+C) always exits immediately
+        if hasattr(event, 'key') and event.key == "ctrl+c":
+            self.app.exit()
 
     DEFAULT_CSS = """
     HomeScreen {
