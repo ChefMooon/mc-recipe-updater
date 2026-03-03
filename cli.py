@@ -25,6 +25,7 @@ Usage:
 """
 
 import json
+import os
 import click
 import subprocess
 import sys
@@ -33,6 +34,134 @@ from pathlib import Path
 from config import ConfigManager, ReportManager, CONFIG_DIR, CONFIG_FILE, SUITES_FILE, DEFAULT_MAPPING_FILE, BUNDLED_MAPPING_FILE
 from syncer import MCRU
 from reporter import Reporter, SuiteReporter, TargetChangelogWriter, REPORTS_DIR
+
+
+SNAPSHOT_EXCLUDED_NAMES = {
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    "build",
+    "dist",
+}
+
+
+def _is_snapshot_excluded_name(name: str) -> bool:
+    lowered = name.lower()
+    return (
+        name in SNAPSHOT_EXCLUDED_NAMES
+        or lowered.endswith(".egg-info")
+        or lowered.startswith("bdist.")
+    )
+
+
+def _collect_snapshot_paths(base_path: Path, scan_roots: list[Path]) -> tuple[set[str], set[str]]:
+    folders = set()
+    files = set()
+
+    for root in scan_roots:
+        if not root.exists() or not root.is_dir():
+            continue
+
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if not _is_snapshot_excluded_name(d)]
+            current = Path(dirpath)
+            current_rel = current.relative_to(base_path).as_posix()
+            if current_rel != ".":
+                folders.add(current_rel)
+
+            for filename in filenames:
+                if _is_snapshot_excluded_name(filename):
+                    continue
+                file_rel = (current / filename).relative_to(base_path).as_posix()
+                files.add(file_rel)
+
+    return folders, files
+
+
+def _build_snapshot_tree(folders: set[str], files: set[str]) -> dict:
+    tree = {"dirs": {}, "files": []}
+
+    for folder in sorted(folders):
+        node = tree
+        for part in Path(folder).parts:
+            node = node["dirs"].setdefault(part, {"dirs": {}, "files": []})
+
+    for file_path in sorted(files):
+        node = tree
+        path_obj = Path(file_path)
+        for part in path_obj.parts[:-1]:
+            node = node["dirs"].setdefault(part, {"dirs": {}, "files": []})
+        node["files"].append(path_obj.name)
+
+    return tree
+
+
+def _render_snapshot_tree(tree: dict, indent: str = "", dir_icon: str | None = None, file_icon: str | None = None) -> list[str]:
+    if dir_icon is None or file_icon is None:
+        dir_icon, file_icon = _snapshot_icons()
+    lines = []
+    for dirname in sorted(tree["dirs"].keys()):
+        lines.append(f"{indent}{dir_icon} {dirname}/")
+        lines.extend(_render_snapshot_tree(tree["dirs"][dirname], indent + "  ", dir_icon, file_icon))
+    for filename in sorted(tree["files"]):
+        lines.append(f"{indent}{file_icon} {filename}")
+    return lines
+
+
+def _snapshot_icons() -> tuple[str, str]:
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        "📁📄".encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        return "[D]", "[F]"
+    return "📁", "📄"
+
+
+def _resolve_snapshot_scope(profile_config: dict, manager: ConfigManager) -> dict:
+    source_base = Path(profile_config["source"])
+    target_base = Path(profile_config["target"])
+    mapping_name = profile_config.get("mapping_preset")
+
+    if not mapping_name:
+        return {
+            "mapping_name": None,
+            "mapping": None,
+            "source_roots": [source_base],
+            "target_roots": [target_base],
+        }
+
+    mapping = manager.get_mapping_preset(mapping_name)
+    scoped_config = dict(profile_config)
+    scoped_config["mapping"] = mapping
+    scoped_runner = MCRU(scoped_config, dry_run=True)
+
+    source_roots = []
+    source_roots_raw = mapping.get("source_roots", {})
+    category_map = mapping.get("category_map", {})
+    target_roots_map = mapping.get("target_roots", {})
+    rules = mapping.get("rules", {})
+
+    for source_category in category_map.keys():
+        source_dirs = scoped_runner._resolve_source_dirs(source_category, source_roots_raw)
+        source_roots.extend(source_dirs)
+
+    target_categories = sorted(set(category_map.values()))
+    target_roots = []
+    for target_category in target_categories:
+        mapped_target_root = target_roots_map.get(target_category)
+        if mapped_target_root is None:
+            raise ValueError(
+                f"Mapping target category '{target_category}' has no target root."
+            )
+        target_roots.append(target_base / mapped_target_root)
+
+    return {
+        "mapping_name": mapping_name,
+        "mapping": mapping,
+        "source_roots": source_roots,
+        "target_roots": target_roots,
+        "rules": rules,
+    }
 
 
 @click.group()
@@ -519,6 +648,98 @@ def profile_verify(name):
             click.echo(f"    Source folder does not exist: {p['source']}")
         if not target_exists:
             click.echo(f"    Target folder does not exist: {p['target']}")
+    click.echo()
+
+
+@profile.command("snapshot")
+@click.argument("name")
+def profile_snapshot(name):
+    """Show a source/target folder snapshot for a profile.
+
+    Includes full folder/file trees and summary counts. If the profile uses
+    a mapping preset, only mapped source/target roots are scanned.
+    """
+    cm = ConfigManager()
+    p = cm.get_profile(name)
+    if p is None:
+        click.echo(f"❌  Profile '{name}' not found.")
+        return
+
+    source_base = Path(p["source"])
+    target_base = Path(p["target"])
+
+    if not source_base.exists():
+        click.echo(f"❌  Source folder does not exist: {p['source']}")
+        return
+
+    try:
+        scope = _resolve_snapshot_scope(p, cm)
+    except (FileNotFoundError, ValueError) as err:
+        click.echo(f"❌  {err}")
+        return
+
+    source_roots = scope["source_roots"]
+    target_roots = scope["target_roots"]
+
+    source_folders, source_files = _collect_snapshot_paths(source_base, source_roots)
+    target_folders, target_files = _collect_snapshot_paths(target_base, target_roots)
+
+    source_tree = _build_snapshot_tree(source_folders, source_files)
+    target_tree = _build_snapshot_tree(target_folders, target_files)
+
+    click.echo(f"\nProfile: {p['name']}")
+    click.echo("-" * 72)
+    click.echo(f"Source : {source_base}")
+    click.echo(f"Target : {target_base}")
+    if scope["mapping_name"]:
+        click.echo(f"Mapping: {scope['mapping_name']} (snapshot scoped to mapped roots)")
+
+    click.echo("\n1) Source snapshot")
+    click.echo("-" * 72)
+    if scope["mapping_name"]:
+        click.echo("Mapped source roots:")
+        if source_roots:
+            for root in source_roots:
+                click.echo(f"  - {root}")
+        else:
+            click.echo("  (none resolved from mapping source_roots)")
+        click.echo()
+
+    source_lines = _render_snapshot_tree(source_tree)
+    if source_lines:
+        for line in source_lines:
+            click.echo(line)
+    else:
+        click.echo("(no files found)")
+
+    click.echo(f"\nSource summary: {len(source_files)} files, {len(source_folders)} folders")
+
+    click.echo("\n2) Target snapshot")
+    click.echo("-" * 72)
+    if not target_base.exists():
+        click.echo(f"(target folder missing: {target_base})")
+    else:
+        if scope["mapping_name"]:
+            click.echo("Mapped target roots:")
+            for root in target_roots:
+                click.echo(f"  - {root}")
+            click.echo()
+
+        target_lines = _render_snapshot_tree(target_tree)
+        if target_lines:
+            for line in target_lines:
+                click.echo(line)
+        else:
+            click.echo("(no files found)")
+
+    click.echo(f"\nTarget summary: {len(target_files)} files, {len(target_folders)} folders")
+
+    click.echo("\n3) Comprehensive summary")
+    click.echo("-" * 72)
+    click.echo(f"Source totals : {len(source_files)} files, {len(source_folders)} folders")
+    click.echo(f"Target totals : {len(target_files)} files, {len(target_folders)} folders")
+    click.echo(f"File delta    : {len(source_files) - len(target_files):+d}")
+    click.echo(f"Folder delta  : {len(source_folders) - len(target_folders):+d}")
     click.echo()
 
 

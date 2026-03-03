@@ -98,6 +98,7 @@ See [profiles.md](profiles.md) for a full guide including profile schema, report
 | `mcru profile list` | List all saved profiles |
 | `mcru profile show <name>` | Inspect a single profile |
 | `mcru profile verify <name>` | Validate that source and target folders exist |
+| `mcru profile snapshot <name>` | Show source/target folder snapshots with totals |
 | `mcru profile remove <name>` | Delete a profile |
 | `mcru profile update <name> <source> <target>` | Overwrite a saved profile |
 
@@ -163,6 +164,31 @@ Profile: myproject
 ✅  Target: /home/user/dist
 
 ✅  Profile 'myproject' is valid.
+```
+
+---
+
+### `mcru profile snapshot` — Show source/target snapshots
+
+```bash
+mcru profile snapshot <name>
+```
+
+Prints a folder/file tree for:
+
+1. Source location with a total files/folders summary
+2. Target location with a total files/folders summary
+3. A comprehensive combined summary of source and target counts
+
+If the profile has `mapping_preset` configured, snapshot scope is limited to the mapped roots only:
+
+- Source scan is limited to directories resolved from `source_roots`
+- Target scan is limited to mapped `target_roots`
+
+Common cache/metadata folders such as `__pycache__`, `.egg-info`, and build output folders are excluded.
+
+```bash
+mcru profile snapshot myproject
 ```
 
 ---

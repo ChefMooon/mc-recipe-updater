@@ -92,6 +92,20 @@ mcru profile show <name>
 ```
 Prints all details for the named profile, including the creation timestamp.
 
+### Snapshot a profile's source/target state
+```bash
+mcru profile snapshot <name>
+```
+Prints a full folder/file tree for the profile's source and target locations,
+followed by per-side totals and a comprehensive source-vs-target summary.
+
+If the profile uses a mapping preset, snapshot is scoped to mapping roots only:
+
+- Source scan uses resolved `source_roots`
+- Target scan uses mapped `target_roots`
+
+This makes the snapshot reflect exactly where mapped sync logic will look.
+
 ### Delete a profile
 ```bash
 mcru profile remove <name>
