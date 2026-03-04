@@ -5,15 +5,197 @@ Prints a colour-coded summary to the terminal and saves
 a timestamped .txt report to ~/.mcru/reports/
 
 Classes:
-  Reporter      - single-profile report
-  SuiteReporter - combined report for a suite (list of profile runs)
+  Reporter           - single-profile report
+  SuiteReporter      - combined report for a suite (list of profile runs)
+  ProfileListFormatter - formats profile configuration list as ASCII cards
 """
 
 import click
+import shutil
 from datetime import datetime
 from pathlib import Path
 
 REPORTS_DIR = Path.home() / ".mcru" / "reports"
+
+
+# ──────────────────────────────────────────────────────────────
+# Profile List Formatter — formats profiles as ASCII cards
+# ──────────────────────────────────────────────────────────────
+
+class ProfileListFormatter:
+    """
+    Formats a list of profiles as ASCII cards for plain-text CLI reports.
+    
+    Each profile is rendered as a two-column card with profile metadata on the
+    left and source/target paths on the right, separated by a `|` character.
+    
+    All output is plain ASCII with no ANSI codes or Unicode characters.
+    Paths that exceed line width are wrapped to the next line.
+    """
+    
+    LEFT_COL_WIDTH = 32  # Fixed width for left column (including leading indent)
+    SEPARATOR_IDX = 32   # 0-indexed position of the | separator
+    DEFAULT_TERMINAL_WIDTH = 80
+    
+    def __init__(self, terminal_width: int = None):
+        """
+        Initialize the formatter.
+        
+        Parameters
+        ----------
+        terminal_width : int, optional
+            Terminal width in characters. If None, tries to detect or defaults to 80.
+        """
+        if terminal_width is None:
+            terminal_width = shutil.get_terminal_size((self.DEFAULT_TERMINAL_WIDTH, 24))[0]
+            # Clamp to at least accommodate left column + separator + some content
+            terminal_width = max(terminal_width, 80)
+        self.terminal_width = terminal_width
+        # Layout: 32 (left) + 1 (|) + right_content = terminal_width
+        # Right content is 47 chars (including the leading space after |)
+        self.right_col_width = terminal_width - self.SEPARATOR_IDX - 1
+    
+    def format_profiles(self, profiles: list) -> str:
+        """
+        Format a list of profiles as ASCII cards.
+        
+        Parameters
+        ----------
+        profiles : list of dict
+            Each dict must have: 'name', 'source', 'target', and optionally
+            'mapping', 'parsers' (list or empty).
+        
+        Returns
+        -------
+        str
+            Formatted output as a string.
+        """
+        if not profiles:
+            return ""
+        
+        lines = []
+        
+        # Header with count
+        lines.append(f"PROFILES  ({len(profiles)} entries)")
+        lines.append("=" * self.terminal_width)
+        lines.append("")
+        
+        # Each profile as a card
+        for profile in profiles:
+            card_lines = self._format_card(profile)
+            lines.extend(card_lines)
+        
+        return "\n".join(lines)
+    
+    def _format_card(self, profile: dict) -> list:
+        """
+        Format a single profile as a card.
+        
+        Returns a list of lines for this card, including the divider at the end.
+        """
+        name = profile.get("name", "")
+        source = profile.get("source", "")
+        target = profile.get("target", "")
+        mapping = profile.get("mapping") or "--"
+        parsers = profile.get("parsers") or "--"
+        
+        # Handle parsers: if it's a list, join it; otherwise use as-is
+        if isinstance(parsers, (list, tuple)):
+            parsers = ", ".join(parsers) if parsers else "--"
+        
+        # Build left column lines
+        left_lines = [
+            name,
+            f"mapping  {mapping}",
+            f"parser   {parsers}",
+        ]
+        
+        # Build right column lines (with wrapping)
+        right_lines = []
+        right_lines.extend(self._wrap_path("src", source))
+        right_lines.extend(self._wrap_path("tgt", target))
+        
+        # Pad left column to match right column height
+        while len(left_lines) < len(right_lines):
+            left_lines.append("")
+        
+        # Build card lines
+        card_lines = []
+        for i, left_line in enumerate(left_lines):
+            right_line = right_lines[i] if i < len(right_lines) else ""
+            card_lines.append(self._build_card_line(left_line, right_line))
+        
+        # Add separator divider
+        card_lines.append(self._build_divider_line())
+        
+        # Add blank line between cards
+        card_lines.append("")
+        
+        return card_lines
+    
+    def _wrap_path(self, label: str, path: str) -> list:
+        """
+        Wrap a path to fit in the right column.
+        
+        Returns a list of lines, with leading space included:
+        - First line: ' ' + 'label  ' + path  
+        - Continuation lines: '      ' + path (6 spaces for alignment)
+        """
+        lines = []
+        
+        # First line: space + label + path
+        first_line_prefix = f" {label}  "  # " src  " = 6 chars
+        available_first_line = self.right_col_width - len(first_line_prefix)
+        
+        # Check if path fits on first line
+        first_line = first_line_prefix + path
+        if len(first_line) <= self.right_col_width:
+            lines.append(first_line)
+        else:
+            # Path needs to wrap
+            first_part = path[:available_first_line]
+            lines.append(first_line_prefix + first_part)
+            
+            # Continuation lines with 6-space indent (aligned to path start)
+            remaining = path[available_first_line:]
+            indent = "      "  # 6 spaces to align under path content
+            continuation_width = self.right_col_width - len(indent)
+            
+            while remaining:
+                chunk = remaining[:continuation_width]
+                remaining = remaining[continuation_width:]
+                lines.append(indent + chunk)
+        
+        return lines
+    
+    def _build_card_line(self, left: str, right: str) -> str:
+        """
+        Build a single card line with left column, separator, and right column.
+        
+        Left column is padded to LEFT_COL_WIDTH-1 (accounting for leading indent).
+        """
+        # Pad left column (account for 2-space indent)
+        left_padded = f"  {left:<{self.LEFT_COL_WIDTH - 2}}"
+        
+        # Pad right column to fill terminal width
+        right_padded = f"{right:<{self.right_col_width}}"
+        
+        # Build the line
+        line = f"{left_padded}|{right_padded}"
+        
+        # Trim to terminal width if needed
+        if len(line) > self.terminal_width:
+            line = line[:self.terminal_width]
+        
+        return line
+    
+    def _build_divider_line(self) -> str:
+        """Build the divider line that appears after each card."""
+        # Left part: 2-space indent + dashes to fill 32-char width
+        left_div = "-" * (self.LEFT_COL_WIDTH - 2)  # 30 dashes
+        # Right part: fill remaining width (47 chars: space + label area + path area)
+        right_div = "-" * self.right_col_width
+        return f"  {left_div}|{right_div}"
 
 
 class Reporter:
@@ -378,10 +560,6 @@ class TargetChangelogWriter:
             f"## {ts} \u2014 {self.profile_name}",
             "",
             f"**Summary:** {summary_str}  ",
-            f"**Source:** `{config.get('source', '\u2014')}`  ",
-            f"**Target:** `{config.get('target', '\u2014')}`  ",
-            f"**Parsers:** {parsers}  ",
-            f"**Mapping:** {mapping}  ",
             "",
         ]
 

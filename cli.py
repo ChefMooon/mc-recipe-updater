@@ -33,7 +33,7 @@ import shutil
 from pathlib import Path
 from config import ConfigManager, ReportManager, CONFIG_DIR, CONFIG_FILE, SUITES_FILE, DEFAULT_MAPPING_FILE, BUNDLED_MAPPING_FILE
 from syncer import MCRU
-from reporter import Reporter, SuiteReporter, TargetChangelogWriter, REPORTS_DIR
+from reporter import Reporter, SuiteReporter, TargetChangelogWriter, ProfileListFormatter, REPORTS_DIR
 
 
 SNAPSHOT_EXCLUDED_NAMES = {
@@ -489,16 +489,27 @@ def profile_add(name, source, target, parser, description, mapping, target_chang
 def profile_list():
     """List all saved sync profiles."""
     cm = ConfigManager()
-    profiles = cm.list_profiles()
-    if not profiles:
+    profiles_data = cm.list_profiles()
+    if not profiles_data:
         click.echo("No profiles saved yet. Use 'mcru profile add' to create one.")
         return
-    click.echo(f"\n{'NAME':<20} {'SOURCE':<30} {'TARGET':<30} {'PARSERS':<20} MAPPING")
-    click.echo("─" * 125)
-    for p in profiles:
-        parsers = ", ".join(p.get("parsers", [])) or "—"
-        mapping = p.get("mapping_preset") or "—"
-        click.echo(f"{p['name']:<20} {p['source']:<30} {p['target']:<30} {parsers:<20} {mapping}")
+    
+    # Convert to formatter format
+    profiles = [
+        {
+            "name": p["name"],
+            "source": p["source"],
+            "target": p["target"],
+            "mapping": p.get("mapping_preset"),
+            "parsers": p.get("parsers"),
+        }
+        for p in profiles_data
+    ]
+    
+    formatter = ProfileListFormatter()
+    output = formatter.format_profiles(profiles)
+    click.echo()
+    click.echo(output)
     click.echo()
 
 
