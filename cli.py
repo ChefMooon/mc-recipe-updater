@@ -754,6 +754,70 @@ def profile_snapshot(name):
     click.echo()
 
 
+@profile.command("sort")
+@click.option(
+    "--sort-by",
+    type=click.Choice(["name", "created_at"], case_sensitive=False),
+    default="name",
+    show_default=True,
+    help="Field to sort by.",
+)
+@click.option(
+    "--order",
+    type=click.Choice(["asc", "desc"], case_sensitive=False),
+    default="asc",
+    show_default=True,
+    help="Sort direction: ascending or descending.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Preview the sorted order without modifying profiles.json.",
+)
+def profile_sort(sort_by, order, dry_run):
+    """Sort saved profiles by name or creation date.
+
+    Use --dry-run to preview the result without writing changes.
+
+    \b
+    Examples:
+      mcru profile sort --sort-by name --order asc
+      mcru profile sort --sort-by created_at --order desc --dry-run
+    """
+    cm = ConfigManager()
+
+    if not cm.list_profiles():
+        click.echo("No profiles saved yet. Use 'mcru profile add' to create one.")
+        return
+
+    result = cm.sort_profiles(sort_by=sort_by, order=order, dry_run=dry_run)
+    sorted_profiles = result["profiles"]
+    label = "name" if sort_by == "name" else "date created"
+    direction = "ascending" if order == "asc" else "descending"
+
+    if dry_run:
+        click.echo()
+        click.echo(f"  [Dry run] Would sort {len(sorted_profiles)} profile(s) by {label} ({direction}):")
+        click.echo()
+        profiles = [
+            {
+                "name": p["name"],
+                "source": p["source"],
+                "target": p["target"],
+                "mapping": p.get("mapping_preset"),
+                "parsers": p.get("parsers"),
+            }
+            for p in sorted_profiles
+        ]
+        formatter = ProfileListFormatter()
+        click.echo(formatter.format_profiles(profiles))
+        click.echo()
+        click.echo("  Run without --dry-run to apply.")
+        click.echo()
+    else:
+        click.echo(f"✔  Sorted {len(sorted_profiles)} profile(s) by {label} ({direction}).")
+
+
 # ──────────────────────────────────────────────
 # Run a Sync Job
 # ──────────────────────────────────────────────

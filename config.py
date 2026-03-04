@@ -113,6 +113,44 @@ class ConfigManager:
     def list_profiles(self) -> list:
         return list(self.profiles)
 
+    def sort_profiles(self, sort_by: str = "name", order: str = "asc", dry_run: bool = False) -> dict:
+        """Sort profiles by a given field and order.
+
+        Args:
+            sort_by: Field to sort by. One of: 'name', 'created_at'.
+            order:   Sort direction. One of: 'asc', 'desc'.
+            dry_run: If True, return the sorted list without modifying or saving.
+
+        Returns:
+            dict with keys: sort_by, order, dry_run, profiles (sorted copy).
+        """
+        valid_sort_by = ("name", "created_at")
+        valid_order = ("asc", "desc")
+        if sort_by not in valid_sort_by:
+            raise ValueError(f"Invalid sort_by '{sort_by}'. Choose from: {', '.join(valid_sort_by)}")
+        if order not in valid_order:
+            raise ValueError(f"Invalid order '{order}'. Choose from: {', '.join(valid_order)}")
+
+        reverse = order == "desc"
+
+        def sort_key(p):
+            if sort_by == "created_at":
+                return p.get("created_at") or ""
+            return p.get("name", "").lower()
+
+        sorted_profiles = sorted(self.profiles, key=sort_key, reverse=reverse)
+
+        if not dry_run:
+            self.profiles = sorted_profiles
+            self._save()
+
+        return {
+            "sort_by": sort_by,
+            "order": order,
+            "dry_run": dry_run,
+            "profiles": sorted_profiles,
+        }
+
     def _get_profile_mutable(self, name: str) -> dict:
         """Return the live profile dict (not a copy) for in-place mutation."""
         for p in self.profiles:

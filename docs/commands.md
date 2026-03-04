@@ -99,6 +99,7 @@ See [profiles.md](profiles.md) for a full guide including profile schema, report
 | `mcru profile show <name>` | Inspect a single profile |
 | `mcru profile verify <name>` | Validate that source and target folders exist |
 | `mcru profile snapshot <name>` | Show source/target folder snapshots with totals |
+| `mcru profile sort` | Sort profiles in profiles.json by name or date |
 | `mcru profile remove <name>` | Delete a profile |
 | `mcru profile update <name> <source> <target>` | Overwrite a saved profile |
 
@@ -189,6 +190,33 @@ Common cache/metadata folders such as `__pycache__`, `.egg-info`, and build outp
 
 ```bash
 mcru profile snapshot myproject
+```
+
+---
+
+### `mcru profile sort` — Sort profiles
+
+```bash
+mcru profile sort [options]
+```
+
+Reorders profiles in `profiles.json` by a chosen field and direction. Use `--dry-run` to preview the sorted order without modifying the file.
+
+| Flag | Values | Default | Description |
+|------|--------|---------|-------------|
+| `--sort-by` | `name`, `created_at` | `name` | Field to sort by |
+| `--order` | `asc`, `desc` | `asc` | Sort direction |
+| `--dry-run` | — | off | Preview without saving |
+
+```bash
+# Sort alphabetically A→Z and persist
+mcru profile sort --sort-by name --order asc
+
+# Sort newest-first and persist
+mcru profile sort --sort-by created_at --order desc
+
+# Preview sort without writing changes
+mcru profile sort --sort-by name --order asc --dry-run
 ```
 
 ---
