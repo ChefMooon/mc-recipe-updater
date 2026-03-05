@@ -5,7 +5,7 @@ Source is always treated as the **correct version**. Target is brought in line w
 
 Available in two modes:
 - **CLI** (`mcru`) — command-line interface for scripting and automation
-- **TUI** (`mcru-tui`) — interactive terminal UI with ASCII art and menu-driven navigation
+- **TUI** (`mcru-tui`, `mcrui`) — interactive terminal UI with ASCII art and menu-driven navigation
 
 > **Docs:** [Architecture & full reference](docs/architecture.md) · [TUI Reference](docs/tui.md) · [Command Reference](docs/commands.md) · [Folder Mapping](docs/folder-mapping.md) · [Suites](docs/suites.md) · [Reports](docs/reports.md)
 
@@ -18,7 +18,7 @@ cd mc-recipe-updater
 pip install -e .
 ```
 
-After this, both `mcru` and `mcru-tui` are available as terminal commands from anywhere.
+After this, both `mcru` and `mcru-tui`/`mcrui` are available as terminal commands from anywhere.
 
 ---
 
@@ -34,6 +34,7 @@ mcru --help          # View all CLI commands
 
 ```bash
 mcru-tui             # Launch the interactive terminal UI
+mcrui
 ```
 
 The TUI provides:
@@ -58,7 +59,7 @@ The TUI provides:
 | Command | Interface | Use Case |
 |---------|-----------|----------|
 | `mcru` | CLI | Scripting, automation, headless environments |
-| `mcru-tui` | TUI | Interactive use, guided workflows, visual feedback
+| `mcru-tui`, `mcrui` | TUI | Interactive use, guided workflows, visual feedback
 
 # Run it
 mcru run myproject
