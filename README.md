@@ -5,11 +5,7 @@ Source is always treated as the **correct version**. Target is brought in line w
 
 Available in two modes:
 - **CLI** (`mcru`) — command-line interface for scripting and automation
-<<<<<<< HEAD
 - **TUI** (`mcru-tui`, `mcrui`) — interactive terminal UI with ASCII art and menu-driven navigation (in development)
-=======
-- **TUI** (`mcru-tui`, `mcrui`) — interactive terminal UI with ASCII art and menu-driven navigation
->>>>>>> 17580ea871388e1e67ec61458a85f7a313b1757b
 
 > **Docs:** [Architecture & full reference](docs/architecture.md) · [TUI Reference](docs/tui.md) · [Command Reference](docs/commands.md) · [Folder Mapping](docs/folder-mapping.md) · [Suites](docs/suites.md) · [Reports](docs/reports.md)
 
