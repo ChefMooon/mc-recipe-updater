@@ -40,6 +40,7 @@ The home screen will display:
   - `s` → Suite
   - `r` → Run
   - `h` → Reports
+  - `b` → Backups
   - `c` → Config
   - `q` → Quit, Escape → Back (context-dependent)
 
@@ -62,6 +63,7 @@ The home screen will display:
 | Suite | `s` | Manage profile suites | 3 |
 | Run | `r` | Execute sync operations | 4 |
 | Reports | `h` | View historical reports | 5 |
+| Backups | `b` | Backup management (CLI) | 5+ |
 | Config | `c` | Settings and presets | 6 |
 | Quit | `q` | Exit TUI | 1 |
 
@@ -162,6 +164,18 @@ The home screen will display:
 - `v` → View selected report
 - `d` → Delete selected report
 - `p` → Prune old reports
+
+### Phase 5+: Backup Management (Complete - CLI Focus)
+
+Full backup management is implemented via CLI. The TUI provides a placeholder information screen directing users to CLI commands:
+- `mcru backup list` — List all backups
+- `mcru backup view <id>` — View backup file listing
+- `mcru backup restore <id>` — Restore a backup
+- `mcru backup pin <id>` — Protect from auto-deletion
+- `mcru backup delete <id>` — Remove backup
+- `mcru backup prune` — Clean up old backups
+
+See [docs/backups.md](backups.md) for complete CLI reference.
 
 ### Phase 6: Configuration (Future)
 
@@ -316,6 +330,16 @@ syncer.start()  # Runs in background
 | `v` | View selected report |
 | `d` | Delete selected |
 | `p` | Prune old reports |
+
+### Backups Screen (Placeholder)
+
+Simple placeholder directing to CLI. Use: `mcru backup --help`
+
+**Keybindings:**
+
+| Key | Action |
+|-----|--------|
+| `Escape` | Back to home screen |
 
 ### Config Screen (Phase 6)
 

@@ -33,6 +33,7 @@ COMMANDS = [
     ("suite", "Manage profile suites"),
     ("run", "Run a sync operation"),
     ("reports", "View run history"),
+    ("backups", "Manage backups"),
     ("config", "Settings & presets"),
 ]
 
@@ -287,6 +288,10 @@ class HomeScreen(Screen):
         """Navigate to reports screen."""
         self._handle_command("reports")
 
+    def action_backups(self) -> None:
+        """Navigate to backups screen."""
+        self._handle_command("backups")
+
     def _handle_command(self, command: str) -> None:
         """Route command to appropriate screen."""
         command = command.strip().lower()
@@ -305,6 +310,8 @@ class HomeScreen(Screen):
             app.push_run_screen()
         elif command == "reports":
             app.push_reports_screen()
+        elif command == "backups":
+            app.push_backups_screen()
         elif command == "config":
             app.push_config_screen()
         elif command in ("q", "quit", "exit"):

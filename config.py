@@ -37,8 +37,10 @@ from datetime import datetime, timedelta
 CONFIG_DIR = Path.home() / ".mcru"
 CONFIG_FILE = CONFIG_DIR / "profiles.json"
 SUITES_FILE = CONFIG_DIR / "suites.json"
+GLOBAL_CONFIG_FILE = CONFIG_DIR / "config.json"
 BUNDLED_MAPPING_FILE = Path(__file__).resolve().parent / "mapping-presets.json"
 DEFAULT_MAPPING_FILE = CONFIG_DIR / "mapping-presets.json"
+REPORTS_DIR = CONFIG_DIR / "reports"
 
 
 class ConfigManager:
@@ -407,3 +409,67 @@ class ReportManager:
             deleted.append(path)
 
         return {"deleted": deleted, "space_freed": space_freed, "dry_run": dry_run}
+
+
+class GlobalConfig:
+    """Manages global mcru settings stored in ~/.mcru/config.json."""
+
+    DEFAULT_CONFIG = {
+        "backup": {
+            "enabled": True,
+            "max_backups": 10,
+        }
+    }
+
+    def __init__(self):
+        self._ensure_config_file()
+
+    def _ensure_config_file(self):
+        """Create global config file if it doesn't exist."""
+        if not GLOBAL_CONFIG_FILE.exists():
+            GLOBAL_CONFIG_FILE.write_text(json.dumps(self.DEFAULT_CONFIG, indent=2))
+
+    def load(self) -> dict:
+        """Load and return the entire global config."""
+        try:
+            return json.loads(GLOBAL_CONFIG_FILE.read_text())
+        except (json.JSONDecodeError, FileNotFoundError):
+            return dict(self.DEFAULT_CONFIG)
+
+    def save(self, config: dict):
+        """Save the global config."""
+        GLOBAL_CONFIG_FILE.write_text(json.dumps(config, indent=2))
+
+    def get(self, key_path: str, default=None):
+        """
+        Get a config value by dot-separated path.
+        Example: get("backup.enabled") returns True/False
+        """
+        config = self.load()
+        keys = key_path.split(".")
+        value = config
+        for key in keys:
+            if isinstance(value, dict):
+                value = value.get(key)
+            else:
+                return default
+        return value if value is not None else default
+
+    def set(self, key_path: str, value):
+        """
+        Set a config value by dot-separated path.
+        Example: set("backup.enabled", False)
+        """
+        config = self.load()
+        keys = key_path.split(".")
+
+        # Navigate/create the path
+        current = config
+        for key in keys[:-1]:
+            if key not in current:
+                current[key] = {}
+            current = current[key]
+
+        # Set the final value
+        current[keys[-1]] = value
+        self.save(config)

@@ -12,6 +12,7 @@ Full flag and option reference for every `mcru` command.
 - **[Suite](#suite-commands)** — Create and manage ordered groups of profiles to run in sequence
 - **[Config](#config-commands)** — View, manage, and reset configuration files and presets
 - **[Reports](#reports-commands)** — List, view, search, and prune saved run reports
+- **[Backups](#backup-commands)** — List, view, restore, pin, and prune automatic backups
 
 ## Feature Guides
 
@@ -25,6 +26,8 @@ Full flag and option reference for every `mcru` command.
 | `-d, --desc <text>` | Description text | `profile add` \| `profile update` \| `suite add` \| `suite update` |
 | `--mapping <preset>` | Mapping preset name | `profile add` \| `profile update` \| `run` \| `quick` |
 | `--dry-run` | Preview changes only | `run` \| `quick` |
+| `--backup` | Force backup on this run | `run` \| `quick` |
+| `--no-backup` | Skip backup on this run | `run` \| `quick` |
 | `--source <path>` | Override source folder | `run` |
 | `--target <path>` | Override target folder | `run` |
 | `--no-report` | Skip saving report file | `run` |
@@ -44,6 +47,8 @@ Accepts a **profile name** or a **suite name** — profile lookup happens first,
 |------|-------------|
 | `--dry-run` | Preview changes only, no files written |
 | `--no-report` | Skip saving the `.txt` report file |
+| `--backup` | Force backup on this run even if globally disabled |
+| `--no-backup` | Skip backup on this run even if globally enabled |
 | `--source <path>` | Override source folder for this run only |
 | `--target <path>` | Override target folder for this run only |
 | `--mapping <preset>` | Override mapping preset for this run only |
@@ -74,6 +79,8 @@ mcru quick <source> <target> [options]
 | Flag | Description |
 |------|-------------|
 | `--dry-run` | Preview only |
+| `--backup` | Force backup on this run even if globally disabled |
+| `--no-backup` | Skip backup on this run even if globally enabled |
 | `-p, --parser <name>` | Parser (repeatable) |
 | `--mapping <preset>` | Mapping preset name |
 
@@ -489,3 +496,269 @@ mcru reports prune --keep 5 --older-than 90
 mcru reports prune --all
 mcru reports prune --keep 10 --dry-run
 ```
+
+---
+
+## Backup Commands
+
+See [backups.md](backups.md) for a full guide including storage paths, rotation logic, configuration, and troubleshooting.
+
+### Quick Reference
+
+| Command | Description |
+|---------|-------------|
+| `mcru backup list [--profile <name>]` | List all backups (most recent first) |
+| `mcru backup view <id>` | Show files inside a backup without extracting |
+| `mcru backup restore <id> [--target <path>] [--yes]` | Restore a backup to target path |
+| `mcru backup delete <id> [--force]` | Delete a backup (--force required if pinned) |
+| `mcru backup pin <id> [--note "text"]` | Pin a backup to prevent auto-deletion |
+| `mcru backup unpin <id>` | Unpin a backup to allow auto-deletion |
+| `mcru backup note <id> <text>` | Set or update note on a backup |
+| `mcru backup prune [--keep <n>] [--pinned] [--dry-run]` | Delete old backups by threshold |
+
+### `mcru backup list` — List all backups
+
+```bash
+mcru backup list [options]
+```
+
+| Flag | Description |
+|------|-------------|
+| `-p, --profile <name>` | Filter by profile name |
+
+Lists backups sorted by creation date (newest first).
+
+```bash
+mcru backup list
+mcru backup list --profile recipes
+```
+
+Output:
+```
+ID                                PROFILE    CREATED              RESULT  PINNED NOTE
+backup_recipes_20250307_143022    recipes    2025-03-07 14:30:22  success no
+backup_quick_20250307_150901      quick      2025-03-07 15:09:01  failed  yes    before v2 migration
+```
+
+### `mcru backup view` — Show files in a backup
+
+```bash
+mcru backup view <id>
+```
+
+Lists all files stored in the backup zip with their sizes, without extracting.
+
+```bash
+mcru backup view backup_recipes_20250307_143022
+```
+
+Output:
+```
+📦  Contents of backup_recipes_20250307_143022.zip:
+──────────────────────────────────────────────────────────────────────────────
+  recipes/config.json                                          (2.1 KB)
+  recipes/data/items.json                                      (14.8 KB)
+  ...
+──────────────────────────────────────────────────────────────────────────────
+  Total: 47 files, 1.2 MB
+```
+
+### `mcru backup restore` — Restore a backup
+
+```bash
+mcru backup restore <id> [options]
+```
+
+Extracts the backup to the target path. Overwrites existing files at the target.
+
+| Flag | Description |
+|------|-------------|
+| `--target <path>` | Override restore path (default: original target from backup) |
+| `-y, --yes` | Skip confirmation prompt |
+
+```bash
+# Restore to original location
+mcru backup restore backup_recipes_20250307_143022
+
+# Restore to a different location
+mcru backup restore backup_recipes_20250307_143022 --target /tmp/inspect
+
+# Restore without confirmation
+mcru backup restore backup_recipes_20250307_143022 --yes
+```
+
+Prints backup details and requires confirmation before overwriting:
+```
+⚠️  Restore details:
+    Backup ID    : backup_recipes_20250307_143022
+    Created      : 2025-03-07T14:30:22
+    Restore to   : /path/to/target
+    Target files : 47
+
+🤔  This will overwrite files at the target path. Continue? [y/N]:
+```
+
+### `mcru backup delete` — Delete a backup
+
+```bash
+mcru backup delete <id> [options]
+```
+
+| Flag | Description |
+|------|-------------|
+| `-f, --force` | Delete even if pinned |
+
+```bash
+mcru backup delete backup_recipes_20250307_143022
+mcru backup delete backup_recipes_20250307_143022 --force
+```
+
+If the backup is pinned and `--force` is not set:
+```
+❌  Backup 'backup_recipes_20250307_143022' is pinned. Use 'mcru backup unpin <id>' first or pass --force.
+```
+
+### `mcru backup pin` — Pin a backup
+
+```bash
+mcru backup pin <id> [options]
+```
+
+Prevents auto-deletion during rotation. Useful for preserving known-good states.
+
+| Flag | Description |
+|------|-------------|
+| `-n, --note "text"` | Set or update a label for the backup |
+
+```bash
+mcru backup pin backup_recipes_20250307_143022
+mcru backup pin backup_recipes_20250307_143022 --note "before schema v2 migration"
+```
+
+### `mcru backup unpin` — Unpin a backup
+
+```bash
+mcru backup unpin <id>
+```
+
+Allows the backup to be deleted during automatic rotation.
+
+```bash
+mcru backup unpin backup_recipes_20250307_143022
+```
+
+### `mcru backup note` — Set or update note
+
+```bash
+mcru backup note <id> <text>
+```
+
+Sets a label on a backup for easy identification.
+
+```bash
+mcru backup note backup_recipes_20250307_143022 "stable version, all recipes tested"
+```
+
+### `mcru backup prune` — Delete old backups
+
+```bash
+mcru backup prune [options]
+```
+
+Deletes old backups by threshold. `--keep` is required.
+
+| Flag | Description |
+|------|-------------|
+| `--keep <n>` | Keep only N most recent backups (required); delete others |
+| `--pinned` | Also delete pinned backups (normally preserved) |
+| `--dry-run` | Preview what would be deleted without deleting |
+
+```bash
+# Keep only 5 most recent, delete all others (except pinned)
+mcru backup prune --keep 5
+
+# Keep 5, also delete pinned (dangerous!)
+mcru backup prune --keep 5 --pinned
+
+# Preview without deleting
+mcru backup prune --keep 5 --dry-run
+```
+
+---
+
+## Run Flags: Backup Overrides
+
+Both `mcru run` and `mcru quick` support per-run backup overrides:
+
+| Flag | Description | Applies To |
+|------|-------------|-----------|
+| `--backup` | Force backup on this run even if globally disabled | `run` \| `quick` |
+| `--no-backup` | Skip backup on this run even if globally enabled | `run` \| `quick` |
+
+**Note:** `--dry-run` always skips backups regardless of these flags.
+
+```bash
+# Force backup
+mcru run myprofile --backup
+mcru quick ./src ./dst --backup
+
+# Skip backup
+mcru run myprofile --no-backup
+mcru quick ./src ./dst --no-backup
+```
+
+---
+
+## Config Commands for Backups
+
+### `mcru config set` — Set a config value
+
+```bash
+mcru config set <key> <value>
+```
+
+Sets global configuration values. Supports nested keys with dot notation.
+
+**Backup-related keys:**
+- `backup.enabled` — `true` or `false`
+- `backup.max_backups` — integer (default: 10, minimum: 1)
+
+```bash
+mcru config set backup.enabled true
+mcru config set backup.enabled false
+mcru config set backup.max_backups 20
+```
+
+### `mcru config show` — Show config and settings
+
+```bash
+mcru config show
+```
+
+Displays global settings including current backup configuration:
+```
+📁  Config directory : ~/.mcru
+    profiles.json    : ~/.mcru/profiles.json
+    suites.json      : ~/.mcru/suites.json
+    config.json      : ~/.mcru/config.json
+    ...
+
+⚙️  Global Settings:
+    backup.enabled     : true
+    backup.max_backups : 10
+```
+
+### `mcru config get` — Get a config value
+
+```bash
+mcru config get [<key>]
+```
+
+Displays a single config value or the full config if no key is provided.
+
+```bash
+mcru config get backup.enabled
+mcru config get backup           # Show entire backup block
+mcru config get               # Show all settings
+```
+

@@ -72,3 +72,8 @@ class MCRecipeApp(App):
         """Navigate to configuration screen."""
         from tui.screens.config import ConfigScreen
         self.push_screen(ConfigScreen(self.config_manager))
+
+    def push_backups_screen(self) -> None:
+        """Navigate to backups management screen."""
+        from tui.screens.backups import BackupsScreen
+        self.push_screen(BackupsScreen(self.config_manager))

@@ -83,6 +83,7 @@ mcru quick ./src ./dist --dry-run
 | `mcru quick <src> <tgt>` | One-off sync without saving a profile |
 | `mcru profile ...` | Create and manage sync profiles |
 | `mcru suite ...` | Create and manage suites |
+| `mcru backup ...` | List, view, restore, pin, and prune backups |
 | `mcru config ...` | View, open, or reset the config directory |
 | `mcru reports ...` | List, view, search, and prune saved run reports |
 
@@ -126,6 +127,22 @@ To add a custom parser, see the [architecture reference](docs/architecture.md#re
 
 ---
 
+## Backups
+
+Before every sync run (including `mcru quick`), mcru automatically snapshots the entire target folder as a `.zip` file in `~/.mcru/backups/`. The last 10 backups are kept by default; older ones are pruned after each successful run.
+
+- **Pin a backup** to prevent auto-deletion: `mcru backup pin <id>`
+- **Restore a backup**: `mcru backup restore <id>`
+- **List all backups**: `mcru backup list`
+- **Disable backups globally**: `mcru config set backup.enabled false`
+- **Override per-run**:
+  - `mcru run myprofile --no-backup` — skip backup on this run
+  - `mcru run myprofile --backup` — force backup even if globally disabled
+
+Backups are never created in `--dry-run` mode. See [docs/backups.md](docs/backups.md) for full reference, including rotation logic, restore workflow, and troubleshooting.
+
+---
+
 ## Where Data is Stored
 
 All user data lives under `~/.mcru/`, created automatically on first run.
@@ -134,7 +151,10 @@ All user data lives under `~/.mcru/`, created automatically on first run.
 |------|----------|
 | `~/.mcru/profiles.json` | All saved profiles |
 | `~/.mcru/suites.json` | All saved suites |
+| `~/.mcru/config.json` | Global settings (backup preferences, etc.) |
 | `~/.mcru/mapping-presets.json` | Mapping presets (seeded from package, freely editable) |
+| `~/.mcru/backups/` | Timestamped `.zip` snapshot files |
+| `~/.mcru/backups.json` | Backup metadata registry |
 | `~/.mcru/reports/` | Timestamped `.txt` report files |
 
 > `mapping-presets.json` is copied from the package defaults only once — upgrades never overwrite your local copy.  

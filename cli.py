@@ -31,8 +31,9 @@ import subprocess
 import sys
 import shutil
 from pathlib import Path
-from config import ConfigManager, ReportManager, CONFIG_DIR, CONFIG_FILE, SUITES_FILE, DEFAULT_MAPPING_FILE, BUNDLED_MAPPING_FILE
+from config import ConfigManager, ReportManager, CONFIG_DIR, CONFIG_FILE, SUITES_FILE, DEFAULT_MAPPING_FILE, BUNDLED_MAPPING_FILE, GlobalConfig
 from syncer import MCRU
+from backup import BackupManager, BACKUPS_DIR
 from reporter import Reporter, SuiteReporter, TargetChangelogWriter, ProfileListFormatter, REPORTS_DIR
 
 
@@ -183,11 +184,21 @@ def config():
 @config.command("show")
 def config_show():
     """Show the config directory path and file locations."""
+    gc = GlobalConfig()
+    config = gc.load()
+    
     click.echo(f"\n📁  Config directory : {CONFIG_DIR}")
     click.echo(f"    profiles.json    : {CONFIG_FILE}")
     click.echo(f"    suites.json      : {SUITES_FILE}")
     click.echo(f"    mapping-presets  : {DEFAULT_MAPPING_FILE}")
-    click.echo(f"    reports/         : {REPORTS_DIR}\n")
+    click.echo(f"    reports/         : {REPORTS_DIR}")
+    click.echo(f"    config.json      : {CONFIG_DIR / 'config.json'}\n")
+    
+    # Show global config settings
+    click.echo("⚙️  Global Settings:")
+    backup_config = config.get("backup", {})
+    click.echo(f"    backup.enabled     : {backup_config.get('enabled', True)}")
+    click.echo(f"    backup.max_backups : {backup_config.get('max_backups', 10)}\n")
 
 
 @config.command("open")
@@ -246,6 +257,51 @@ def config_reset():
         click.echo(f"✅  Seeded: {DEFAULT_MAPPING_FILE}")
 
     click.echo("✅  Config reset complete.")
+
+
+@config.command("set")
+@click.argument("key")
+@click.argument("value")
+def config_set(key, value):
+    """Set a global config value by key (e.g., 'backup.enabled true')."""
+    gc = GlobalConfig()
+    
+    # Parse value as boolean, int, or string
+    if value.lower() in ("true", "yes", "1", "on"):
+        parsed_value = True
+    elif value.lower() in ("false", "no", "0", "off"):
+        parsed_value = False
+    elif value.isdigit():
+        parsed_value = int(value)
+    else:
+        parsed_value = value
+    
+    try:
+        gc.set(key, parsed_value)
+        click.echo(f"✅  Config updated: {key} = {parsed_value}")
+    except Exception as err:
+        click.echo(f"❌  {err}")
+
+
+@config.command("get")
+@click.argument("key", required=False)
+def config_get(key):
+    """Get a global config value by key, or show all if no key provided."""
+    gc = GlobalConfig()
+    
+    if key is None:
+        # Show all config
+        config = gc.load()
+        click.echo("\n⚙️  Global Config:")
+        click.echo(json.dumps(config, indent=2))
+        click.echo()
+    else:
+        value = gc.get(key)
+        if value is None:
+            click.echo(f"❌  Key not found: {key}")
+        else:
+            click.echo(f"{key} = {value}")
+
 
 
 # ──────────────────────────────────────────────
@@ -826,18 +882,30 @@ def profile_sort(sort_by, order, dry_run):
 @click.argument("profile")
 @click.option("--dry-run", is_flag=True, help="Preview changes without applying them.")
 @click.option("--no-report", is_flag=True, help="Skip saving the report file.")
+@click.option("--backup", "backup_override", flag_value=True, default=None, help="Force backup on this run even if globally disabled.")
+@click.option("--no-backup", "backup_override", flag_value=False, help="Skip backup on this run even if globally enabled.")
 @click.option("--source", default=None, help="Override the source folder for this run (applies to every profile in a suite).")
 @click.option("--target", default=None, help="Override the target folder for this run (applies to every profile in a suite).")
 @click.option("--mapping", default=None, help="Mapping preset name. Overrides profile/suite mapping if set.")
 @click.option("--target-changelog", is_flag=True, default=False,
               help="Prepend a Markdown entry to CHANGELOG.md in the target folder on every live run (overrides profile setting).")
-def run(profile, dry_run, no_report, source, target, mapping, target_changelog):
+def run(profile, dry_run, no_report, backup_override, source, target, mapping, target_changelog):
     """Run a sync job using a saved profile or suite.\n
     If the name matches a suite, all profiles in the suite are run in order
     and a single combined report is produced.\n
     Example: mcru run myproject --dry-run
     """
     cm = ConfigManager()
+    gc = GlobalConfig()
+    bm = BackupManager()
+    
+    # Determine if backups should be created
+    backup_enabled = gc.get("backup.enabled", True)
+    if backup_override is not None:
+        backup_enabled = backup_override
+    backup_enabled = backup_enabled and not dry_run  # Never backup in dry-run mode
+    max_backups = gc.get("backup.max_backups", 10)
+    
     config = cm.get_profile(profile)
 
     # ── Suite run ──────────────────────────────────────────────
@@ -894,12 +962,31 @@ def run(profile, dry_run, no_report, source, target, mapping, target_changelog):
             if pcfg.get("mapping_preset"):
                 click.echo(f"     Mapping: {pcfg['mapping_preset']}")
 
+            # Create backup if enabled
+            backup_id = None
+            if backup_enabled:
+                try:
+                    backup_id = bm.create_backup(pcfg["target"], pname)
+                except OSError as err:
+                    click.echo(f"  ⚠️  {pname}: Backup failed: {err}")
+                    if not click.confirm("  Continue without backup?", default=True):
+                        click.echo(f"  ❌  Aborted.")
+                        continue
+
             mcru = MCRU(pcfg, dry_run=dry_run)
             try:
                 results = mcru.run()
             except ValueError as err:
                 click.echo(f"  ❌  {pname}: {err} — skipping.")
+                if backup_id:
+                    bm.finalize_backup(backup_id, "failed")
                 continue
+
+            # Finalize backup and rotate
+            if backup_id:
+                bm.finalize_backup(backup_id, "success")
+                bm.rotate_backups(max_backups)
+
             runs.append((pname, pcfg, results))
 
             if (target_changelog or pcfg.get("target_changelog")) and not dry_run:
@@ -964,12 +1051,30 @@ def run(profile, dry_run, no_report, source, target, mapping, target_changelog):
         click.echo(f"❌  Target folder does not exist: {config['target']}")
         return
 
+    # Create backup if enabled
+    backup_id = None
+    if backup_enabled:
+        try:
+            backup_id = bm.create_backup(config["target"], profile)
+        except OSError as err:
+            click.echo(f"❌  Backup failed: {err}")
+            if not click.confirm("Continue without backup?", default=True):
+                click.echo("Aborted.")
+                return
+
     mcru = MCRU(config, dry_run=dry_run)
     try:
         results = mcru.run()
     except ValueError as err:
         click.echo(f"❌  {err}")
+        if backup_id:
+            bm.finalize_backup(backup_id, "failed")
         return
+
+    # Finalize backup and rotate
+    if backup_id:
+        bm.finalize_backup(backup_id, "success")
+        bm.rotate_backups(max_backups)
 
     reporter = Reporter(profile, config, results, dry_run=dry_run)
     reporter.print_summary()
@@ -1160,6 +1265,224 @@ def quick(source, target, dry_run, parser, mapping):
         return
     reporter = Reporter("quick-run", config, results, dry_run=dry_run)
     reporter.print_summary()
+
+
+# ──────────────────────────────────────────────
+# Backups
+# ──────────────────────────────────────────────
+
+@cli.group()
+def backup():
+    """List, view, restore, pin, and prune backups."""
+    pass
+
+
+@backup.command("list")
+@click.option("--profile", "-p", default=None, help="Filter by profile name.")
+def backup_list(profile):
+    """List all backups (most recent first)."""
+    bm = BackupManager()
+    entries = bm.list_backups(profile=profile)
+    
+    if not entries:
+        if profile:
+            click.echo(f"No backups found for profile '{profile}'.")
+        else:
+            click.echo("No backups found.")
+        return
+    
+    # Header
+    header = f"\n{'ID':<35} {'PROFILE':<15} {'CREATED':<19} {'RESULT':<8} {'PINNED':<7} NOTE"
+    click.echo(header)
+    click.echo("─" * 100)
+    
+    # Rows
+    for entry in entries:
+        backup_id = entry.id[:32] + "..." if len(entry.id) > 32 else entry.id
+        created = entry.created_at[:19] if entry.created_at else "unknown"
+        pinned_str = "yes" if entry.pinned else "no"
+        result_str = entry.run_result if entry.run_result else "pending"
+        note = entry.note if entry.note else ""
+        
+        click.echo(f"{backup_id:<35} {entry.profile:<15} {created:<19} {result_str:<8} {pinned_str:<7} {note}")
+    
+    click.echo()
+
+
+@backup.command("view")
+@click.argument("backup_id")
+def backup_view(backup_id):
+    """Show files inside a backup zip."""
+    bm = BackupManager()
+    
+    try:
+        entry = bm.get_backup(backup_id)
+        contents = bm.view_backup_contents(backup_id)
+    except ValueError as err:
+        click.echo(f"❌  {err}")
+        return
+    
+    # Calculate total size
+    total_size = sum(size for _, size in contents)
+    
+    click.echo(f"\n📦  Contents of {entry.filename}:")
+    click.echo("─" * 80)
+    
+    for filepath, size in contents:
+        size_kb = size / 1024
+        if size_kb < 1024:
+            size_str = f"{size_kb:.1f} KB"
+        else:
+            size_mb = size_kb / 1024
+            size_str = f"{size_mb:.1f} MB"
+        click.echo(f"  {filepath:<60} ({size_str:>8})")
+    
+    click.echo("─" * 80)
+    total_mb = total_size / (1024 * 1024)
+    if total_mb < 1024:
+        total_str = f"{total_mb:.1f} MB"
+    else:
+        total_gb = total_mb / 1024
+        total_str = f"{total_gb:.2f} GB"
+    click.echo(f"  Total: {len(contents)} files, {total_str}\n")
+
+
+@backup.command("restore")
+@click.argument("backup_id")
+@click.option("--target", default=None, help="Override restore path (default: original target from backup).")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt.")
+def backup_restore(backup_id, target, yes):
+    """Restore a backup to the target path."""
+    bm = BackupManager()
+    
+    try:
+        entry = bm.get_backup(backup_id)
+    except ValueError as err:
+        click.echo(f"❌  {err}")
+        return
+    
+    restore_path = target if target else entry.target
+    
+    # Confirmation
+    click.echo(f"\n⚠️  Restore details:")
+    click.echo(f"    Backup ID    : {entry.id}")
+    click.echo(f"    Created      : {entry.created_at}")
+    click.echo(f"    Restore to   : {restore_path}")
+    click.echo(f"    Target files : {len(bm.view_backup_contents(backup_id))}")
+    
+    if not yes:
+        if not click.confirm("\n🤔  This will overwrite files at the target path. Continue?"):
+            click.echo("Cancelled.")
+            return
+    
+    try:
+        bm.restore_backup(backup_id, target_path=restore_path if target else None)
+        click.echo(f"\n✅  Backup restored successfully.")
+    except (ValueError, OSError) as err:
+        click.echo(f"\n❌  Restore failed: {err}")
+
+
+@backup.command("delete")
+@click.argument("backup_id")
+@click.option("--force", "-f", is_flag=True, help="Delete even if pinned.")
+def backup_delete(backup_id, force):
+    """Delete a backup."""
+    bm = BackupManager()
+    
+    try:
+        entry = bm.get_backup(backup_id)
+    except ValueError as err:
+        click.echo(f"❌  {err}")
+        return
+    
+    if entry.pinned and not force:
+        click.echo(f"❌  Backup '{backup_id}' is pinned. Use 'mcru backup unpin {backup_id}' first or pass --force.")
+        return
+    
+    if not click.confirm(f"Are you sure you want to delete {backup_id}?", default=False):
+        click.echo("Cancelled.")
+        return
+    
+    try:
+        bm.delete_backup(backup_id, force=force)
+        click.echo(f"✅  Backup deleted.")
+    except ValueError as err:
+        click.echo(f"❌  {err}")
+
+
+@backup.command("pin")
+@click.argument("backup_id")
+@click.option("--note", "-n", default="", help="Optional note/label for the backup.")
+def backup_pin(backup_id, note):
+    """Pin a backup to prevent automatic deletion."""
+    bm = BackupManager()
+    
+    try:
+        bm.pin_backup(backup_id, note=note)
+        click.echo(f"✅  Backup pinned: {backup_id}")
+        if note:
+            click.echo(f"    Note: {note}")
+    except ValueError as err:
+        click.echo(f"❌  {err}")
+
+
+@backup.command("unpin")
+@click.argument("backup_id")
+def backup_unpin(backup_id):
+    """Unpin a backup to allow automatic deletion."""
+    bm = BackupManager()
+    
+    try:
+        bm.unpin_backup(backup_id)
+        click.echo(f"✅  Backup unpinned: {backup_id}")
+    except ValueError as err:
+        click.echo(f"❌  {err}")
+
+
+@backup.command("note")
+@click.argument("backup_id")
+@click.argument("text")
+def backup_note(backup_id, text):
+    """Set or update the note on a backup."""
+    bm = BackupManager()
+    
+    try:
+        bm.set_note(backup_id, text)
+        click.echo(f"✅  Note updated: {backup_id}")
+        click.echo(f"    Note: {text}")
+    except ValueError as err:
+        click.echo(f"❌  {err}")
+
+
+@backup.command("prune")
+@click.option("--keep", type=int, default=None, help="Number of backups to keep (delete all others).")
+@click.option("--pinned", is_flag=True, help="Also prune pinned backups.")
+@click.option("--dry-run", is_flag=True, help="Show what would be deleted without deleting.")
+def backup_prune(keep, pinned, dry_run):
+    """Delete old backups; --pinned includes pinned ones."""
+    bm = BackupManager()
+    
+    if keep is None:
+        click.echo("❌  --keep is required (number of backups to keep).")
+        return
+    
+    if dry_run:
+        entries = bm.list_backups()
+        candidates = entries if pinned else [e for e in entries if not e.pinned]
+        candidates.sort(key=lambda e: e.created_at, reverse=True)
+        to_delete = candidates[keep:]
+        
+        if not to_delete:
+            click.echo(f"✅  No backups would be deleted (keeping {keep} backups).")
+            return
+        
+        click.echo(f"\nWould delete {len(to_delete)} backup(s):")
+        for entry in to_delete:
+            click.echo(f"  - {entry.id}")
+        click.echo()
+    else:
+        deleted = bm.prune_backups(keep=keep, include_pinned=pinned)
+        click.echo(f"✅  Pruned {deleted} backup(s).")
 
 
 if __name__ == "__main__":

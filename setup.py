@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
     name="mc-recipe-updater",
     version="2.0.0",
-    py_modules=["cli", "config", "registry", "reporter", "syncer"],
+    py_modules=["cli", "config", "registry", "reporter", "syncer", "backup"],
     packages=find_packages(),
     install_requires=[
         "click>=8.0",
