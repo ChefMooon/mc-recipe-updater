@@ -63,7 +63,15 @@ class ConfigManager:
         return data.get("profiles", [])
 
     def _save(self):
-        CONFIG_FILE.write_text(json.dumps({"profiles": self.profiles}, indent=2))
+        # Prepare profiles for saving, omitting empty optional fields
+        profiles_to_save = []
+        for profile in self.profiles:
+            profile_copy = dict(profile)
+            # Omit tags if empty array
+            if "tags" in profile_copy and not profile_copy["tags"]:
+                profile_copy.pop("tags", None)
+            profiles_to_save.append(profile_copy)
+        CONFIG_FILE.write_text(json.dumps({"profiles": profiles_to_save}, indent=2))
 
     def _load_suites(self) -> list:
         data = json.loads(SUITES_FILE.read_text())
@@ -82,6 +90,20 @@ class ConfigManager:
         mapping_preset: str | None = None,
         target_changelog: bool = False,
     ):
+        """Create a new profile or overwrite an existing one by name.
+
+        Args:
+            name: Unique profile identifier.
+            source: Path to source folder (will be resolved to absolute path).
+            target: Path to target folder (will be resolved to absolute path).
+            parsers: List of content parser names to apply before hashing.
+            description: Optional description shown in profile list.
+            mapping_preset: Optional mapping preset name for category-based sync.
+            target_changelog: If True, append Markdown changelog entry to target CHANGELOG.md.
+
+        The profile is initialized with an empty tags list (optional field, omitted when saving if empty).
+        Call update_profile_field with 'add-tag' to add tags after profile creation.
+        """
         # Remove existing profile with the same name (upsert)
         self.profiles = [p for p in self.profiles if p["name"] != name]
         profile = {
@@ -91,6 +113,7 @@ class ConfigManager:
             "parsers": parsers,
             "description": description,
             "created_at": datetime.now().isoformat(timespec="seconds"),
+            "tags": [],  # Initialize as empty list (will be omitted when saving if empty)
         }
         if mapping_preset:
             profile["mapping_preset"] = mapping_preset
@@ -109,7 +132,11 @@ class ConfigManager:
     def get_profile(self, name: str) -> dict | None:
         for p in self.profiles:
             if p["name"] == name:
-                return dict(p)  # return a copy
+                profile_copy = dict(p)
+                # Ensure tags field exists (backward compatibility with old profiles)
+                if "tags" not in profile_copy:
+                    profile_copy["tags"] = []
+                return profile_copy
         return None
 
     def list_profiles(self) -> list:
@@ -153,17 +180,100 @@ class ConfigManager:
             "profiles": sorted_profiles,
         }
 
+    def list_profiles_by_tags(self, tag_groups: list) -> list:
+        """Filter profiles by tags with AND/OR logic support.
+
+        Args:
+            tag_groups: List of tag group strings. Examples:
+                - ["fabric"] → profiles with tag "fabric"
+                - ["fabric", "forge"] → profiles with "fabric" OR "forge" (OR between groups)
+                - ["fabric,priority-high"] → profiles with "fabric" OR "priority-high" (OR within group)
+                - ["fabric,priority-high,+and"] → profiles with BOTH "fabric" AND "priority-high"
+
+        Logic:
+            - Default is OR between groups (multiple tag_groups strings)
+            - Within a group (comma-separated tags), default is OR
+            - Append ",+and" to a group to use AND logic within that group
+            - Tags are normalized to lowercase for comparison
+
+        Returns:
+            List of profiles matching the filter criteria, in original order.
+        """
+        # Empty tag list returns all profiles
+        if not tag_groups:
+            return list(self.profiles)
+
+        matched_profiles = []
+
+        for profile in self.profiles:
+            profile_tags = set(profile.get("tags", []))
+            
+            # Check if profile matches any of the tag groups (OR between groups)
+            matches_any_group = False
+            
+            for group in tag_groups:
+                # Parse group: check for +and suffix
+                use_and = group.endswith(",+and")
+                if use_and:
+                    # Remove the ",+and" suffix to get the actual tags
+                    group = group[:-4]
+                
+                # Split by comma to get individual tags in this group
+                group_tags = [self._normalize_tag(t.strip()) for t in group.split(",")]
+                # Filter out empty strings
+                group_tags = [t for t in group_tags if t]
+                
+                if not group_tags:
+                    continue
+                
+                # Check if profile matches this group
+                if use_and:
+                    # AND logic: profile must have ALL tags in the group
+                    matches_group = all(tag in profile_tags for tag in group_tags)
+                else:
+                    # OR logic: profile must have at least ONE tag in the group
+                    matches_group = any(tag in profile_tags for tag in group_tags)
+                
+                if matches_group:
+                    matches_any_group = True
+                    break
+            
+            if matches_any_group:
+                matched_profiles.append(profile)
+
+        return matched_profiles
+
     def _get_profile_mutable(self, name: str) -> dict:
         """Return the live profile dict (not a copy) for in-place mutation."""
         for p in self.profiles:
             if p["name"] == name:
+                # Ensure tags field exists (backward compatibility)
+                if "tags" not in p:
+                    p["tags"] = []
                 return p
         raise ValueError(f"Profile '{name}' not found.")
+
+    def _normalize_tag(self, tag: str) -> str:
+        """Normalize a tag to lowercase for case-insensitive comparison and storage."""
+        return tag.lower()
 
     def update_profile_field(self, name: str, field: str, value):
         """Update a single field of an existing profile without touching others.
         
-        Supported fields: description, mapping_preset, target_changelog, source, target, parsers
+        Args:
+            name: Profile name to update.
+            field: Field to update. Supported fields:
+                - 'description': Profile description (string).
+                - 'mapping_preset': Mapping preset name (string), or None to remove.
+                - 'target_changelog': Boolean to enable/disable changelog.
+                - 'source': Source folder path (string).
+                - 'target': Target folder path (string).
+                - 'parsers': List of parser names (replaces existing list).
+                - 'add-tag': Add a single tag (normalized to lowercase).
+                - 'remove-tag': Remove a single tag (normalized to lowercase).
+            value: New value for the field.
+
+        Tags are case-insensitive; 'add-tag' and 'remove-tag' operations normalize to lowercase.
         """
         profile = self._get_profile_mutable(name)
         
@@ -185,8 +295,16 @@ class ConfigManager:
             profile["target"] = str(Path(value).resolve())
         elif field == "parsers":
             profile["parsers"] = list(value) if value else []
+        elif field == "add-tag":
+            normalized_tag = self._normalize_tag(value)
+            if normalized_tag not in profile["tags"]:
+                profile["tags"].append(normalized_tag)
+        elif field == "remove-tag":
+            normalized_tag = self._normalize_tag(value)
+            if normalized_tag in profile["tags"]:
+                profile["tags"].remove(normalized_tag)
         else:
-            raise ValueError(f"Cannot update field '{field}'. Supported fields: description, mapping_preset, target_changelog, source, target, parsers")
+            raise ValueError(f"Cannot update field '{field}'. Supported fields: description, mapping_preset, target_changelog, source, target, parsers, add-tag, remove-tag")
         
         self._save()
 

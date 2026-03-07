@@ -524,12 +524,32 @@ def profile():
 @click.option("--mapping", default=None, help="Optional mapping preset name (from mapping-presets.json).")
 @click.option("--target-changelog", is_flag=True, default=False,
               help="Append a Markdown changelog entry to CHANGELOG.md in the target folder on every live run.")
-def profile_add(name, source, target, parser, description, mapping, target_changelog):
-    """Save a new sync profile.\n
-    Example: mcru profile add myproject ./src ./dist --parser normalize_line_endings
+@click.option("--tags", default=None, help="Comma-separated tags for this profile (e.g., fabric,priority-high).")
+def profile_add(name, source, target, parser, description, mapping, target_changelog, tags):
+    """Save a new sync profile with source, target, and optional settings.
+
+    Args:
+        name: Unique profile identifier.
+        source: Path to source folder.
+        target: Path to target folder.
+        parser: One or more content parsers to apply before hashing.
+        description: Optional description for this profile.
+        mapping: Optional mapping preset name for category-based sync.
+        target_changelog: If set, append changelog entries to target CHANGELOG.md.
+        tags: Comma-separated tags for organizing profiles (optional).
+
+    Tags help organize and filter profiles. Tags are case-insensitive and normalized to lowercase.
+    See 'mcru profile list --filter-tag' to filter by tags.
     """
     cm = ConfigManager()
     cm.add_profile(name, source, target, list(parser), description, mapping, target_changelog)
+    
+    # Add tags if provided
+    if tags:
+        tag_list = [tag.strip() for tag in tags.split(",")]
+        for tag in tag_list:
+            cm.update_profile_field(name, "add-tag", tag)
+    
     click.echo(f"✅  Profile '{name}' saved.")
     click.echo(f"    Source : {source}")
     click.echo(f"    Target : {target}")
@@ -539,13 +559,32 @@ def profile_add(name, source, target, parser, description, mapping, target_chang
         click.echo(f"    Mapping: {mapping}")
     if target_changelog:
         click.echo(f"    Target changelog: enabled")
+    if tags:
+        click.echo(f"    Tags   : {', '.join(tag_list)}")
 
 
 @profile.command("list")
-def profile_list():
-    """List all saved sync profiles."""
+@click.option("--filter-tag", multiple=True, help="Filter profiles by tag (can be specified multiple times). Use comma for multiple tags in one group, add ',+and' for AND logic.")
+def profile_list(filter_tag):
+    """List all saved sync profiles, optionally filtered by tags.
+
+    Args:
+        filter_tag: Filter by tag (repeatable). Examples:
+            - '--filter-tag fabric' → profiles with tag "fabric"
+            - '--filter-tag fabric --filter-tag forge' → profiles with "fabric" OR "forge"
+            - '--filter-tag fabric,priority-high,+and' → profiles with BOTH "fabric" AND "priority-high"
+
+    By default, multiple --filter-tag options use OR logic (union of tag groups).
+    Within a comma-separated group, default is OR. Add ',+and' to a group to use AND logic.
+    """
     cm = ConfigManager()
-    profiles_data = cm.list_profiles()
+    
+    # Apply filtering if --filter-tag is specified
+    if filter_tag:
+        profiles_data = cm.list_profiles_by_tags(list(filter_tag))
+    else:
+        profiles_data = cm.list_profiles()
+    
     if not profiles_data:
         click.echo("No profiles saved yet. Use 'mcru profile add' to create one.")
         return
@@ -558,6 +597,7 @@ def profile_list():
             "target": p["target"],
             "mapping": p.get("mapping_preset"),
             "parsers": p.get("parsers"),
+            "tags": p.get("tags", []),
         }
         for p in profiles_data
     ]
@@ -588,6 +628,10 @@ def profile_show(name):
     click.echo(f"  Parsers : {parsers}")
     mapping = p.get("mapping_preset") or "—"
     click.echo(f"  Mapping : {mapping}")
+    tags = p.get("tags") or []
+    if tags:
+        tags_str = ", ".join(tags)
+        click.echo(f"  Tags    : {tags_str}")
     click.echo(f"  Target changelog: {'enabled' if p.get('target_changelog') else 'disabled'}")
     if p.get("created_at"):
         click.echo(f"  Created : {p['created_at']}")
@@ -633,11 +677,24 @@ def profile_update(name, source, target, parser, description, mapping, target_ch
               help="Set parser list (replaces existing parsers).")
 @click.option("--source", default=None, help="Update source folder path.")
 @click.option("--target", default=None, help="Update target folder path.")
-def profile_set(name, description, mapping, target_changelog, parser, source, target):
-    """Update individual fields of an existing profile.\n
-    Example: mcru profile set myproject --mapping mc-arch-recipes-split
-    Example: mcru profile set myproject --parser normalize_line_endings --target-changelog on
-    Example: mcru profile set myproject -d "Updated description"
+@click.option("--add-tags", default=None, multiple=True, help="Comma-separated tags to add to the profile.")
+@click.option("--remove-tags", default=None, multiple=True, help="Comma-separated tags to remove from the profile.")
+def profile_set(name, description, mapping, target_changelog, parser, source, target, add_tags, remove_tags):
+    """Update individual fields of an existing profile without re-specifying the entire configuration.
+
+    Args:
+        name: Profile name to update.
+        description: Optional new description.
+        mapping: Optional new mapping preset name.
+        target_changelog: Enable ('on') or disable ('off') target changelog.
+        parser: One or more parsers (replaces existing parser list).
+        source: Optional new source folder path.
+        target: Optional new target folder path.
+        add_tags: Comma-separated tags to add (repeatable option).
+        remove_tags: Comma-separated tags to remove (repeatable option).
+
+    Tags are case-insensitive; duplication is prevented automatically.
+    Only specified fields are updated; unchanged fields are preserved.
     """
     cm = ConfigManager()
     
@@ -676,8 +733,30 @@ def profile_set(name, description, mapping, target_changelog, parser, source, ta
         cm.update_profile_field(name, "target", target)
         changes.append(f"target → {target}")
     
+    # Handle add-tags
+    if add_tags:
+        added_tags = []
+        for tags_str in add_tags:
+            tag_list = [tag.strip() for tag in tags_str.split(",")]
+            for tag in tag_list:
+                cm.update_profile_field(name, "add-tag", tag)
+                added_tags.append(tag)
+        if added_tags:
+            changes.append(f"tags added → {', '.join(added_tags)}")
+    
+    # Handle remove-tags
+    if remove_tags:
+        removed_tags = []
+        for tags_str in remove_tags:
+            tag_list = [tag.strip() for tag in tags_str.split(",")]
+            for tag in tag_list:
+                cm.update_profile_field(name, "remove-tag", tag)
+                removed_tags.append(tag)
+        if removed_tags:
+            changes.append(f"tags removed → {', '.join(removed_tags)}")
+    
     if not changes:
-        click.echo(f"❌  No changes specified. Use --description, --mapping, --parser, --target-changelog, --source, or --target.")
+        click.echo(f"❌  No changes specified. Use --description, --mapping, --parser, --target-changelog, --source, --target, --add-tags, or --remove-tags.")
         return
     
     click.echo(f"✏️  Profile '{name}' updated:")

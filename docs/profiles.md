@@ -56,6 +56,7 @@ Profiles are stored in `~/.mcru/profiles.json`:
 - `target` — path to the target folder.
 - `parsers` — list of content parser names applied before hashing (may be empty).
 - `mapping` — mapping preset name, or `null` if none.
+- `tags` — optional list of tags for organizing profiles (stored as lowercase; omitted if empty).
 - `created_at` — set automatically; preserved across `profile update`.
 
 ---
@@ -72,12 +73,97 @@ mcru profile add <name> <source> <target> [options]
 | `-p, --parser <name>` | Apply a content parser before hashing (repeatable) |
 | `-d, --desc <text>` | Optional description |
 | `--mapping <preset>` | Mapping preset name |
+| `--tags <tags>` | Comma-separated tags for organizing this profile (optional) |
 
 ```bash
 mcru profile add myproject ./src ./dist
 mcru profile add recipes ./my-mod ./target-pack --mapping mc-arch
 mcru profile add configs ~/dotfiles ~/.config --parser strip_bom --parser normalize_line_endings
+mcru profile add fabric-mods ./src ./dist --tags fabric,priority-high
 ```
+
+---
+
+## Organizing Profiles with Tags
+
+Tags help you organize and filter profiles by category, mod type, version, priority, or any other
+logical grouping. Each profile can have any number of tags.
+
+### Tag behavior
+
+- **Free-form** — use any string as a tag (e.g., `fabric`, `forge`, `priority-high`, `1.20.1`).
+- **Case-insensitive** — tags are automatically normalized to lowercase for comparisons.
+- **Optional** — tags are only stored if explicitly set; a profile without tags takes no space in the JSON.
+
+### Adding Tags to Profiles
+
+Add tags when creating a profile with `--tags`:
+
+```bash
+mcru profile add fabric-recipes ./src ./dist --tags fabric,priority-high
+mcru profile add forge-mod ./src ./dist --tags forge,mod-content
+mcru profile add datapack ./src ./dist --tags vanilla,datapack-1.20.1
+```
+
+Use commas to separate multiple tags. Spaces around tags are trimmed automatically.
+
+### Managing Tags with `profile set`
+
+Add or remove tags without re-specifying the entire profile using `--add-tags` and `--remove-tags`:
+
+```bash
+# Add one or more tags
+mcru profile set myproject --add-tags critical
+mcru profile set myproject --add-tags fabric,priority-high
+
+# Remove one or more tags
+mcru profile set myproject --remove-tags old-tag
+mcru profile set myproject --remove-tags fabric,priority-high
+
+# Add and remove in one command
+mcru profile set myproject --add-tags priority-high --remove-tags wip
+```
+
+### Filtering Profiles by Tag
+
+Use `--filter-tag` with `profile list` to find profiles by their tags:
+
+```bash
+# Show all profiles with tag "fabric"
+mcru profile list --filter-tag fabric
+
+# Show profiles with tag "fabric" OR "forge" (OR logic between filter groups)
+mcru profile list --filter-tag fabric --filter-tag forge
+```
+
+#### AND logic within a group
+
+To require profiles to have **all** tags in a group, add `,+and` to the group:
+
+```bash
+# Show profiles that have BOTH "fabric" AND "priority-high"
+mcru profile list --filter-tag fabric,priority-high,+and
+```
+
+#### Complex filtering
+
+Combine OR and AND logic:
+
+```bash
+# Show profiles with ("fabric" AND "priority-high") OR "forge"
+mcru profile list --filter-tag fabric,priority-high,+and --filter-tag forge
+```
+
+This filters for profiles that either:
+- Have BOTH `fabric` AND `priority-high`, OR
+- Have `forge`
+
+### Future Tag Use
+
+Tags will be used in the TUI to organize and filter profiles in a visual interface,
+making it easier to navigate large profile collections.
+
+---
 
 ### List all profiles
 ```bash

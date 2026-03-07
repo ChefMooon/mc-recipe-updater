@@ -98,6 +98,7 @@ class ProfileListFormatter:
         target = profile.get("target", "")
         mapping = profile.get("mapping") or "--"
         parsers = profile.get("parsers") or "--"
+        tags = profile.get("tags") or []
         
         # Handle parsers: if it's a list, join it; otherwise use as-is
         if isinstance(parsers, (list, tuple)):
@@ -109,6 +110,11 @@ class ProfileListFormatter:
             f"mapping  {mapping}",
             f"parser   {parsers}",
         ]
+        
+        # Add tags if present
+        if tags:
+            tags_str = ", ".join(tags) if isinstance(tags, (list, tuple)) else tags
+            left_lines.append(f"tags     {tags_str}")
         
         # Build right column lines (with wrapping)
         right_lines = []
