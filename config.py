@@ -129,6 +129,35 @@ class ConfigManager:
             raise ValueError(f"Profile '{name}' not found.")
         self._save()
 
+    def rename_profile(self, old_name: str, new_name: str):
+        """Rename a profile and update all suite references.
+
+        Args:
+            old_name: Existing profile name.
+            new_name: Desired profile name.
+        """
+        old_name = old_name.strip()
+        new_name = new_name.strip()
+
+        if not new_name:
+            raise ValueError("Profile name cannot be empty.")
+
+        profile = self._get_profile_mutable(old_name)
+        if old_name == new_name:
+            return
+
+        if self.get_profile(new_name) is not None:
+            raise ValueError(f"Profile '{new_name}' already exists.")
+
+        profile["name"] = new_name
+
+        for suite in self.suites:
+            suite_profiles = suite.get("profiles", [])
+            suite["profiles"] = [new_name if name == old_name else name for name in suite_profiles]
+
+        self._save()
+        self._save_suites()
+
     def get_profile(self, name: str) -> dict | None:
         for p in self.profiles:
             if p["name"] == name:
