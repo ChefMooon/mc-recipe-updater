@@ -41,6 +41,7 @@ class ThreadedSyncer:
         self.thread: Optional[threading.Thread] = None
         self.results: Optional[dict] = None
         self.error: Optional[Exception] = None
+        self.cancel_event = threading.Event()
 
     def start(self) -> None:
         """Start the sync in a background thread."""
@@ -50,7 +51,12 @@ class ThreadedSyncer:
     def _run_sync(self) -> None:
         """Internal: run sync and post result."""
         try:
-            mcru = MCRU(self.config, dry_run=self.dry_run)
+            mcru = MCRU(
+                self.config,
+                dry_run=self.dry_run,
+                progress_callback=self.on_progress,
+                cancel_event=self.cancel_event,
+            )
             self.results = mcru.run()
             self.on_complete(self.results, None)
         except Exception as e:
@@ -62,6 +68,10 @@ class ThreadedSyncer:
         if self.thread is None:
             return False
         return self.thread.is_alive()
+
+    def cancel(self) -> None:
+        """Request cooperative cancellation of the running sync."""
+        self.cancel_event.set()
 
     def wait(self, timeout: Optional[float] = None) -> bool:
         """

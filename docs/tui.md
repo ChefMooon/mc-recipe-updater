@@ -63,7 +63,7 @@ The home screen will display:
 | Suite | `s` | Manage profile suites | 3 |
 | Run | `r` | Execute sync operations | 4 |
 | Reports | `h` | View historical reports | 5 |
-| Backups | `b` | Backup management (CLI) | 5+ |
+| Backups | `b` | Manage backups | 5+ |
 | Config | `c` | Settings and presets | 6 |
 | Quit | `q` | Exit TUI | 1 |
 
@@ -79,17 +79,15 @@ The home screen will display:
 ### Phase 1: Basic Setup (Complete)
 
 ✅ Home screen with ASCII art and command navigation  
-✅ Placeholder screens for all features  
+✅ Implemented screens for all core features  
 ✅ Entry point registration  
 ✅ Threading utilities for background operations
 
-### Phase 2: Profile Management (Future)
+### Phase 2: Profile Management (Complete)
 
-> Planned features for profile screen
-
-- **List profiles** — Table view with Name, Source, Target, Parsers columns
-- **Add profile** — Form to create new profile (name, paths, parsers, mapping preset)
-- **Edit profile** — Modify existing profile fields
+- **List profiles** — Panel view with selectable profile names and full details
+- **Add profile** — Modal form to create a profile with paths, parsers, mapping preset, and changelog setting
+- **Edit profile** — Modify existing profile fields, including rename
 - **Delete profile** — Remove profile with confirmation
 - **Verify profile** — Check that source/target paths exist
 
@@ -99,11 +97,9 @@ The home screen will display:
 - `d` → Delete selected
 - `v` → Verify paths
 
-### Phase 3: Suite Management (Future)
+### Phase 3: Suite Management (Complete)
 
-> Planned features for suite screen
-
-- **List suites** — Table view with Name, Profile Count, Description
+- **List suites** — Panel view with selectable suite names and full details
 - **Add suite** — Create new suite (name, optional description)
 - **Edit suite** — Modify suite description
 - **Delete suite** — Remove suite with confirmation
@@ -116,9 +112,7 @@ The home screen will display:
 - `d` → Delete selected
 - `m` → Manage profiles in suite
 
-### Phase 4: Sync Execution (Future)
-
-> Planned features for run/sync screen
+### Phase 4: Sync Execution (Complete)
 
 **Pre-execution:**
 - Profile/Suite selector (dropdown or searchable list)
@@ -150,9 +144,7 @@ The home screen will display:
 - `Space` → Start sync
 - `Escape` → Cancel (if running), Back (if complete)
 
-### Phase 5: Reports Viewing (Future)
-
-> Planned features for reports screen
+### Phase 5: Reports Viewing (Complete)
 
 - **List recent reports** — Table with Profile/Suite, Timestamp, Added/Updated/Removed counts
 - **Search/filter** — By profile name, date range, result type
@@ -165,21 +157,19 @@ The home screen will display:
 - `d` → Delete selected report
 - `p` → Prune old reports
 
-### Phase 5+: Backup Management (Complete - CLI Focus)
+### Phase 5+: Backup Management (Complete)
 
-Full backup management is implemented via CLI. The TUI provides a placeholder information screen directing users to CLI commands:
-- `mcru backup list` — List all backups
-- `mcru backup view <id>` — View backup file listing
-- `mcru backup restore <id>` — Restore a backup
-- `mcru backup pin <id>` — Protect from auto-deletion
-- `mcru backup delete <id>` — Remove backup
-- `mcru backup prune` — Clean up old backups
+Full backup management is available in the TUI:
+- **List backups** — View backup entries with profile, date, and pinned state
+- **View contents** — Inspect files inside a backup zip
+- **Restore backup** — Restore selected backup with confirmation
+- **Pin/unpin backup** — Protect important backups from normal pruning
+- **Delete backup** — Remove selected backup with confirmation
+- **Prune backups** — Keep the newest N backups, with preview and confirmation
 
 See [docs/backups.md](backups.md) for complete CLI reference.
 
-### Phase 6: Configuration (Future)
-
-> Planned features for config screen
+### Phase 6: Configuration (Complete)
 
 - **Show paths:**
   - `~/.mcru/` — Config directory
@@ -319,7 +309,9 @@ syncer.start()  # Runs in background
 |-----|--------|
 | `↑` / `↓` | Navigate profile/suite list |
 | `Space` | Start sync |
-| `Escape` | Cancel (during run) / Back (after completion) |
+| `Tab` | Toggle Profile/Suite mode before running |
+| `r` | Re-run after completion |
+| `Escape` | Cancel (during run) / Back to selection (after completion) |
 
 ### Reports Screen (Phase 5)
 
@@ -331,14 +323,18 @@ syncer.start()  # Runs in background
 | `d` | Delete selected |
 | `p` | Prune old reports |
 
-### Backups Screen (Placeholder)
-
-Simple placeholder directing to CLI. Use: `mcru backup --help`
+### Backups Screen
 
 **Keybindings:**
 
 | Key | Action |
 |-----|--------|
+| `↑` / `↓` | Navigate backup list |
+| `v` | View selected backup contents |
+| `r` | Restore selected backup |
+| `p` | Pin/unpin selected backup |
+| `d` | Delete selected backup |
+| `P` | Prune old backups |
 | `Escape` | Back to home screen |
 
 ### Config Screen (Phase 6)

@@ -15,8 +15,14 @@ so whitespace or encoding differences don't create false positives.
 import hashlib
 import fnmatch
 import shutil
+from threading import Event
+from typing import Callable
 from pathlib import Path
 from registry import get_parser
+
+
+class SyncCancelled(Exception):
+    """Raised when a sync run is cancelled between file operations."""
 
 
 class MCRU:
@@ -24,27 +30,47 @@ class MCRU:
     # CHANGELOG.md is tool-managed and must not be deleted between runs.
     TARGET_PROTECTED_FILES = {"CHANGELOG.md"}
 
-    def __init__(self, config: dict, dry_run: bool = False):
+    def __init__(
+        self,
+        config: dict,
+        dry_run: bool = False,
+        progress_callback: Callable[[int, int, str], None] | None = None,
+        cancel_event: Event | None = None,
+    ):
         self.source = Path(config["source"])
         self.target = Path(config["target"])
         self.parsers = config.get("parsers", [])
         self.mapping = config.get("mapping")
         self.dry_run = dry_run
+        self.progress_callback = progress_callback or (lambda current, total, operation: None)
+        self.cancel_event = cancel_event
 
         if not self.source.exists():
             raise FileNotFoundError(f"Source folder not found: {self.source}")
 
     def run(self) -> dict:
         """Run the full compare + sync pipeline. Returns a results dict."""
+        self._check_cancel()
         if self.mapping:
             return self._run_with_mapping()
 
         return self._run_default()
 
+    def _progress(self, current: int, total: int, operation: str) -> None:
+        self.progress_callback(current, total, operation)
+
+    def _check_cancel(self) -> None:
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            raise SyncCancelled("Sync cancelled.")
+
     def _run_default(self) -> dict:
         """Run legacy sync behavior with direct source/target path mirroring."""
+        self._progress(0, 0, "Scanning source")
         source_files = self._scan(self.source)
+        self._check_cancel()
+        self._progress(0, 0, "Scanning target")
         target_files = self._scan(self.target)
+        self._check_cancel()
 
         to_add = []       # in source, missing from target
         to_update = []    # in both, but content differs
@@ -52,7 +78,10 @@ class MCRU:
         unchanged = []    # identical in both
 
         # Compare source → target
-        for rel_path, src_info in source_files.items():
+        total_source = len(source_files)
+        for index, (rel_path, src_info) in enumerate(source_files.items(), 1):
+            self._check_cancel()
+            self._progress(index, total_source, "Comparing files")
             if rel_path not in target_files:
                 to_add.append(rel_path)
             else:
@@ -64,7 +93,10 @@ class MCRU:
                     unchanged.append(rel_path)
 
         # Find files only in target (should be removed)
-        for rel_path in target_files:
+        total_target = len(target_files)
+        for index, rel_path in enumerate(target_files, 1):
+            self._check_cancel()
+            self._progress(index, total_target, "Finding removals")
             if rel_path not in source_files and rel_path not in self.TARGET_PROTECTED_FILES:
                 to_remove.append(rel_path)
 
@@ -74,7 +106,9 @@ class MCRU:
         applied_remove = []
         errors = []
 
-        for rel_path in to_add:
+        for index, rel_path in enumerate(to_add, 1):
+            self._check_cancel()
+            self._progress(index, len(to_add), "Adding files")
             try:
                 if not self.dry_run:
                     self._copy(self.source / rel_path, self.target / rel_path)
@@ -82,7 +116,9 @@ class MCRU:
             except Exception as e:
                 errors.append((rel_path, str(e)))
 
-        for rel_path in to_update:
+        for index, rel_path in enumerate(to_update, 1):
+            self._check_cancel()
+            self._progress(index, len(to_update), "Updating files")
             try:
                 if not self.dry_run:
                     self._copy(self.source / rel_path, self.target / rel_path)
@@ -90,7 +126,9 @@ class MCRU:
             except Exception as e:
                 errors.append((rel_path, str(e)))
 
-        for rel_path in to_remove:
+        for index, rel_path in enumerate(to_remove, 1):
+            self._check_cancel()
+            self._progress(index, len(to_remove), "Removing files")
             try:
                 if not self.dry_run:
                     (self.target / rel_path).unlink(missing_ok=True)
@@ -103,9 +141,13 @@ class MCRU:
         dirs_removed = []
 
         source_dirs = self._scan_all_dirs(self.source)
+        self._check_cancel()
 
         # Create source directories missing from target (sorted: parents before children)
-        for rel_dir in sorted(source_dirs):
+        sorted_source_dirs = sorted(source_dirs)
+        for index, rel_dir in enumerate(sorted_source_dirs, 1):
+            self._check_cancel()
+            self._progress(index, len(sorted_source_dirs), "Adding directories")
             target_dir_path = self.target / rel_dir
             if not target_dir_path.exists():
                 try:
@@ -121,7 +163,9 @@ class MCRU:
         to_remove_set = set(to_remove)
         target_dirs = sorted(self._scan_all_dirs(self.target), reverse=True)  # deepest first
 
-        for rel_dir in target_dirs:
+        for index, rel_dir in enumerate(target_dirs, 1):
+            self._check_cancel()
+            self._progress(index, len(target_dirs), "Removing directories")
             if rel_dir in source_dirs:
                 continue
             target_dir_path = self.target / rel_dir
@@ -144,6 +188,7 @@ class MCRU:
                     except Exception as e:
                         errors.append((rel_dir + "/", str(e)))
 
+        self._progress(1, 1, "Complete")
         return {
             "added": applied_add,
             "updated": applied_update,
@@ -156,15 +201,22 @@ class MCRU:
 
     def _run_with_mapping(self) -> dict:
         """Run sync behavior based on source->target mapping categories."""
+        self._progress(0, 0, "Building mapping")
         source_to_target = self._build_source_target_map()
+        self._check_cancel()
+        self._progress(0, 0, "Scanning target")
         target_files = self._scan(self.target)
+        self._check_cancel()
 
         to_add = []
         to_update = []
         to_remove = []
         unchanged = []
 
-        for target_rel, source_rel in source_to_target.items():
+        total_mapped = len(source_to_target)
+        for index, (target_rel, source_rel) in enumerate(source_to_target.items(), 1):
+            self._check_cancel()
+            self._progress(index, total_mapped, "Comparing mapped files")
             if target_rel not in target_files:
                 to_add.append(target_rel)
             else:
@@ -175,7 +227,10 @@ class MCRU:
                 else:
                     unchanged.append(target_rel)
 
-        for rel_path in target_files:
+        total_target = len(target_files)
+        for index, rel_path in enumerate(target_files, 1):
+            self._check_cancel()
+            self._progress(index, total_target, "Finding removals")
             if rel_path not in source_to_target and rel_path not in self.TARGET_PROTECTED_FILES:
                 to_remove.append(rel_path)
 
@@ -184,7 +239,9 @@ class MCRU:
         applied_remove = []
         errors = []
 
-        for target_rel in to_add:
+        for index, target_rel in enumerate(to_add, 1):
+            self._check_cancel()
+            self._progress(index, len(to_add), "Adding files")
             try:
                 if not self.dry_run:
                     source_rel = source_to_target[target_rel]
@@ -193,7 +250,9 @@ class MCRU:
             except Exception as e:
                 errors.append((target_rel, str(e)))
 
-        for target_rel in to_update:
+        for index, target_rel in enumerate(to_update, 1):
+            self._check_cancel()
+            self._progress(index, len(to_update), "Updating files")
             try:
                 if not self.dry_run:
                     source_rel = source_to_target[target_rel]
@@ -202,7 +261,9 @@ class MCRU:
             except Exception as e:
                 errors.append((target_rel, str(e)))
 
-        for target_rel in to_remove:
+        for index, target_rel in enumerate(to_remove, 1):
+            self._check_cancel()
+            self._progress(index, len(to_remove), "Removing files")
             try:
                 if not self.dry_run:
                     (self.target / target_rel).unlink(missing_ok=True)
@@ -210,6 +271,7 @@ class MCRU:
             except Exception as e:
                 errors.append((target_rel, str(e)))
 
+        self._progress(1, 1, "Complete")
         return {
             "added": applied_add,
             "updated": applied_update,
@@ -258,6 +320,7 @@ class MCRU:
         source_to_target = {}
 
         for source_category, target_category in category_map.items():
+            self._check_cancel()
             source_dirs = self._resolve_source_dirs(source_category, source_roots)
             target_root = target_roots.get(target_category)
             if target_root is None:
@@ -267,6 +330,7 @@ class MCRU:
 
             for source_dir in source_dirs:
                 for source_file in source_dir.rglob("*"):
+                    self._check_cancel()
                     if not source_file.is_file():
                         continue
 
