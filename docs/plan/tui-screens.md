@@ -2,6 +2,8 @@
 
 Page-by-page design checklist for the TUI implementation. Work through each screen one at a time — design first, then implement.
 
+Use [docs/tui-screen-standards.md](docs/tui-screen-standards.md) as the source of truth for baseline screen behavior (especially keybinding fallback rules) before defining page-specific changes.
+
 **Status key:** `[ ]` not started · `[~]` in design · `[x]` designed & approved · `[x]` implemented
 
 ---

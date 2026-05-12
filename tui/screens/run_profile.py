@@ -3,6 +3,7 @@
 import threading
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from textual.screen import Screen
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Static, ListView, ListItem, Label, Input, Checkbox
@@ -65,17 +66,27 @@ class TargetList(Container):
     """
 
     def __init__(self, mode: str, targets: list[str]):
-        super().__init__()
+        super().__init__(id="section-1-panel")
         self.mode = mode
         self.targets = targets
         self.border_title = f"[1] {'Profiles' if mode == 'profile' else 'Suites'}"
 
     def compose(self):
+        yield ListView(*self._build_items(), id="target-listview")
+
+    def update_targets(self, mode: str, targets: list[str]) -> None:
+        self.mode = mode
+        self.targets = targets
+        self.border_title = f"[1] {'Profiles' if mode == 'profile' else 'Suites'}"
+        listview = self.query_one("#target-listview", ListView)
+        listview.clear()
+        listview.extend(self._build_items())
+
+    def _build_items(self) -> list[ListItem]:
         if self.targets:
-            yield ListView(*[RunTargetItem(name) for name in self.targets], id="target-listview")
-        else:
-            label = "profiles" if self.mode == "profile" else "suites"
-            yield Static(f" No {label} found", id="empty-state")
+            return [RunTargetItem(name) for name in self.targets]
+        label = "profiles" if self.mode == "profile" else "suites"
+        return [ListItem(Label(f" No {label} found"))]
 
 
 class OptionsPanel(Container):
@@ -104,7 +115,7 @@ class OptionsPanel(Container):
     """
 
     def __init__(self, backup_enabled: bool):
-        super().__init__()
+        super().__init__(id="section-2-panel")
         self.border_title = "[2] Options"
         self.backup_enabled = backup_enabled
         self._detail = Static("Select a target to view details", id="target-detail")
@@ -140,7 +151,7 @@ class ProgressPanel(Container):
     """
 
     def __init__(self):
-        super().__init__()
+        super().__init__(id="section-1-panel")
         self.border_title = "[1] Progress"
         self._content = Static("Waiting to start", id="progress-content")
 
@@ -172,7 +183,7 @@ class ResultsPanel(Container):
     """
 
     def __init__(self):
-        super().__init__()
+        super().__init__(id="section-1-panel")
         self.border_title = "[1] Results"
         self._content = Static("No run results yet", id="results-content")
 
@@ -204,7 +215,7 @@ class RunDetailPanel(Container):
     """
 
     def __init__(self):
-        super().__init__()
+        super().__init__(id="section-2-panel")
         self.border_title = "[2] Details"
         self._content = Static("", id="run-detail-content")
 
@@ -217,6 +228,8 @@ class RunDetailPanel(Container):
 
 class RunActionBar(Container):
     """Phase-aware action bar."""
+
+    can_focus = True
 
     DEFAULT_CSS = """
     RunActionBar {
@@ -231,7 +244,7 @@ class RunActionBar(Container):
     """
 
     def __init__(self):
-        super().__init__()
+        super().__init__(id="section-3-actions")
         self.border_title = "[3] Actions"
         self._content = Static("", id="run-action-keys")
 
@@ -240,11 +253,20 @@ class RunActionBar(Container):
 
     def update_phase(self, phase: str) -> None:
         if phase == "running":
-            text = "[bold dim]Esc[/bold dim]: Request cancel"
+            text = (
+                "[bold dim]Esc[/bold dim]: Request cancel"
+            )
         elif phase == "done":
-            text = "[bold green]r[/bold green]: Re-run  [bold dim]Esc[/bold dim]: Back to selection"
+            text = (
+                "[bold green]r[/bold green]: Re-run  "
+                "[bold dim]Esc[/bold dim]: Back to selection"
+            )
         else:
-            text = "[bold green]Space[/bold green]: Start  [bold cyan]Tab[/bold cyan]: Profile/Suite  [bold dim]Esc[/bold dim]: Back"
+            text = (
+                "[bold green]Space[/bold green]: Start  "
+                "[bold cyan]Tab[/bold cyan]: Profile/Suite  "
+                "[bold dim]Esc[/bold dim]: Back"
+            )
         self._content.update(text)
 
 
@@ -253,9 +275,21 @@ class RunProfileScreen(Screen):
 
     BINDINGS = [
         Binding("escape", "back", "Back", show=False),
+        Binding("ctrl+c", "force_quit", "Force Quit", show=False),
         Binding("space", "start_run", "Start", show=False),
         Binding("tab", "toggle_mode", "Toggle", show=False),
         Binding("r", "rerun", "Re-run", show=False),
+        Binding("up", "option_up", "Option Up", show=False),
+        Binding("down", "option_down", "Option Down", show=False),
+        Binding("ctrl+1", "focus_section_1", "Section 1", show=False),
+        Binding("ctrl+2", "focus_section_2", "Section 2", show=False),
+        Binding("ctrl+3", "focus_section_3", "Section 3", show=False),
+        Binding("alt+1", "focus_section_1", "Section 1", show=False),
+        Binding("alt+2", "focus_section_2", "Section 2", show=False),
+        Binding("alt+3", "focus_section_3", "Section 3", show=False),
+        Binding("f1", "focus_section_1", "Section 1", show=False),
+        Binding("f2", "focus_section_2", "Section 2", show=False),
+        Binding("f3", "focus_section_3", "Section 3", show=False),
     ]
 
     DEFAULT_CSS = """
@@ -299,9 +333,22 @@ class RunProfileScreen(Screen):
         self._status_bar: Static | None = None
         self._syncer: ThreadedSyncer | None = None
         self._suite_cancel_event: threading.Event | None = None
+        self._suite_thread: threading.Thread | None = None
         self._started_at: datetime | None = None
         self._last_selection: str | None = None
         self._last_result: dict | None = None
+        self._run_id: int = 0
+        self._option_order = ["option-dry-run", "option-backup", "option-changelog", "option-source", "option-target", "option-mapping"]
+        self._focused_option_index = 0
+        self._option_order = ["option-dry-run", "option-backup", "option-changelog", "option-source", "option-target", "option-mapping"]
+        self._focused_option_index = 0
+
+    def _next_run_id(self) -> int:
+        self._run_id += 1
+        return self._run_id
+
+    def _is_active_run(self, run_id: int) -> bool:
+        return run_id == self._run_id
 
     def compose(self):
         with Vertical(id="run-layout"):
@@ -446,6 +493,7 @@ class RunProfileScreen(Screen):
         self._phase = "selection"
         self._syncer = None
         self._suite_cancel_event = None
+        self._suite_thread = None
         self._target_list = TargetList(self._mode, self._target_names())
         self._options_panel = OptionsPanel(self.global_config.get("backup.enabled", True))
         self._replace_main_panels(self._target_list, self._options_panel)
@@ -459,13 +507,11 @@ class RunProfileScreen(Screen):
 
     def action_toggle_mode(self) -> None:
         if self._phase != "selection":
+            self._set_status("Tab toggle is available only during selection.")
             return
         self._mode = "suite" if self._mode == "profile" else "profile"
-        self._target_list = TargetList(self._mode, self._target_names())
-        row = self.query_one("#panels-row", Horizontal)
-        if row.children:
-            row.children[0].remove()
-        row.mount(self._target_list, before=self._options_panel)
+        if self._target_list:
+            self._target_list.update_targets(self._mode, self._target_names())
         self._set_status(f"Selection mode: {'Profiles' if self._mode == 'profile' else 'Suites'}.")
         self._update_selected_detail()
         try:
@@ -473,9 +519,105 @@ class RunProfileScreen(Screen):
         except Exception:
             pass
 
+    def action_focus_section_1(self) -> None:
+        if self._phase == "selection":
+            if not self._focus_widget("#target-listview", ListView):
+                self._focus_widget("#section-1-panel", Container)
+            return
+        self._focus_widget("#section-1-panel", Container)
+
+    def action_focus_section_2(self) -> None:
+        if self._phase == "selection":
+            if self._focus_widget("#option-dry-run", Checkbox):
+                return
+        self._focus_widget("#section-2-panel", Container)
+
+    def action_focus_section_3(self) -> None:
+        if not self._focus_widget("#section-3-actions", RunActionBar):
+            self._set_status("No actions section is focusable right now.")
+
+    def _focus_widget(self, selector: str, widget_type: type[Any]) -> bool:
+        try:
+            self.query_one(selector, widget_type).focus()
+            return True
+        except Exception:
+            return False
+
+    def _is_option_widget(self, widget: Any) -> bool:
+        """Check if widget is a checkbox or input in the options panel."""
+        if isinstance(widget, (Checkbox, Input)):
+            try:
+                widget_id = widget.id
+                return widget_id in self._option_order
+            except Exception:
+                return False
+        return False
+
+    def _get_focused_option_index(self) -> int:
+        """Get the index of the currently focused option widget in _option_order."""
+        try:
+            focused = self.focused
+            if focused and self._is_option_widget(focused):
+                widget_id = focused.id
+                try:
+                    return self._option_order.index(widget_id)
+                except ValueError:
+                    return -1
+        except Exception:
+            pass
+        return -1
+
+    def _focus_option_by_index(self, index: int) -> bool:
+        """Focus the option widget at the given index in _option_order."""
+        if not (0 <= index < len(self._option_order)):
+            return False
+        option_id = self._option_order[index]
+        if self._phase == "selection":
+            try:
+                widget = self.query_one(f"#{option_id}", (Checkbox, Input))
+                widget.focus()
+                self._focused_option_index = index
+                return True
+            except Exception:
+                return False
+        return False
+
+    def _move_option_focus(self, delta: int) -> None:
+        """Move focus by delta positions in _option_order with wrap-around."""
+        if self._phase != "selection":
+            self._set_status("Option navigation is available only during selection.")
+            return
+        current_index = self._get_focused_option_index()
+        if current_index == -1:
+            # No option is currently focused; start from the beginning
+            current_index = 0
+        else:
+            # Move by delta with wrap-around
+            current_index = (current_index + delta) % len(self._option_order)
+        if self._focus_option_by_index(current_index):
+            pass  # Focus moved successfully
+        else:
+            self._set_status("Could not navigate options.")
+
+    def action_option_up(self) -> None:
+        """Navigate up in the option list."""
+        self._move_option_focus(-1)
+
+    def action_option_down(self) -> None:
+        """Navigate down in the option list."""
+        self._move_option_focus(1)
+
     def action_start_run(self) -> None:
         if self._phase != "selection":
             return
+        # If focused widget is a checkbox in options, toggle it instead of starting run
+        try:
+            focused = self.focused
+            if focused and isinstance(focused, Checkbox) and self._is_option_widget(focused):
+                focused.toggle()
+                return
+        except Exception:
+            pass
         target_name = self._selected_target()
         if not target_name:
             self._set_status("No target selected.")
@@ -501,13 +643,22 @@ class RunProfileScreen(Screen):
             except OSError as err:
                 self._set_status(f"Backup failed: {err}")
                 return
+        run_id = self._next_run_id()
         self._switch_to_running(profile_name, "profile", dry_run)
         self._syncer = ThreadedSyncer(
             config,
             dry_run=dry_run,
-            on_progress=lambda current, total, op: self.app.call_from_thread(self._on_progress, current, total, op, profile_name),
+            on_progress=lambda current, total, op: self.app.call_from_thread(
+                self._on_progress,
+                run_id,
+                current,
+                total,
+                op,
+                profile_name,
+            ),
             on_complete=lambda results, error: self.app.call_from_thread(
                 self._on_profile_complete,
+                run_id,
                 profile_name,
                 config,
                 options,
@@ -527,12 +678,17 @@ class RunProfileScreen(Screen):
             self._set_status("Suite has no profiles.")
             return
         options = self._option_values()
+        run_id = self._next_run_id()
         self._suite_cancel_event = threading.Event()
         self._switch_to_running(suite_name, "suite", options["dry_run"])
-        thread = threading.Thread(target=self._run_suite_worker, args=(suite_name, suite, options), daemon=True)
-        thread.start()
+        self._suite_thread = threading.Thread(
+            target=self._run_suite_worker,
+            args=(run_id, suite_name, suite, options),
+            daemon=True,
+        )
+        self._suite_thread.start()
 
-    def _run_suite_worker(self, suite_name: str, suite: dict, options: dict) -> None:
+    def _run_suite_worker(self, run_id: int, suite_name: str, suite: dict, options: dict) -> None:
         runs = []
         skipped = []
         report_path = None
@@ -559,7 +715,7 @@ class RunProfileScreen(Screen):
                         config,
                         dry_run=options["dry_run"],
                         progress_callback=lambda current, total, op, name=profile_name: self.app.call_from_thread(
-                            self._on_progress, current, total, op, name
+                            self._on_progress, run_id, current, total, op, name
                         ),
                         cancel_event=self._suite_cancel_event,
                     )
@@ -572,19 +728,25 @@ class RunProfileScreen(Screen):
                     self.backup_manager.finalize_backup(backup_id, "success")
                     self.backup_manager.rotate_backups(self.global_config.get("backup.max_backups", 10))
                 if (options["changelog"] or config.get("target_changelog")) and not options["dry_run"]:
-                    TargetChangelogWriter(config["target"], profile_name).write(results, config)
+                    try:
+                        TargetChangelogWriter(config["target"], profile_name).write(results, config)
+                    except Exception as err:
+                        skipped.append((profile_name, f"Changelog failed: {err}"))
                 runs.append((profile_name, config, results))
             if runs:
-                report_path = SuiteReporter(suite_name, runs, dry_run=options["dry_run"]).save_report()
+                try:
+                    report_path = SuiteReporter(suite_name, runs, dry_run=options["dry_run"]).save_report()
+                except Exception as err:
+                    skipped.append((suite_name, f"Report failed: {err}"))
         except SyncCancelled as err:
             cancelled = True
             error = err
         except Exception as err:
             error = err
-        self.app.call_from_thread(self._on_suite_complete, suite_name, options, runs, skipped, report_path, cancelled, error)
+        self.app.call_from_thread(self._on_suite_complete, run_id, suite_name, options, runs, skipped, report_path, cancelled, error)
 
-    def _on_progress(self, current: int, total: int, operation: str, profile_name: str) -> None:
-        if not self._progress_panel:
+    def _on_progress(self, run_id: int, current: int, total: int, operation: str, profile_name: str) -> None:
+        if not self._is_active_run(run_id) or not self._progress_panel:
             return
         counter = f"{current} / {total}" if total else "working"
         cancel_note = "\n[dim]Cancellation requested; waiting for current operation to finish.[/dim]" if self._cancel_requested() else ""
@@ -606,6 +768,7 @@ class RunProfileScreen(Screen):
 
     def _on_profile_complete(
         self,
+        run_id: int,
         profile_name: str,
         config: dict,
         options: dict,
@@ -613,8 +776,11 @@ class RunProfileScreen(Screen):
         results: dict | None,
         error: Exception | None,
     ) -> None:
+        if not self._is_active_run(run_id):
+            return
         report_path = None
         backup_status = "none"
+        post_warnings: list[str] = []
         if backup_id:
             try:
                 self.backup_manager.finalize_backup(backup_id, "failed" if error else "success")
@@ -623,10 +789,17 @@ class RunProfileScreen(Screen):
                 backup_status = backup_id
             except ValueError as err:
                 backup_status = f"finalize failed: {err}"
+                post_warnings.append(f"Backup finalize failed: {err}")
         if results and not error:
-            report_path = Reporter(profile_name, config, results, dry_run=options["dry_run"]).save_report()
+            try:
+                report_path = Reporter(profile_name, config, results, dry_run=options["dry_run"]).save_report()
+            except Exception as err:
+                post_warnings.append(f"Report failed: {err}")
             if (options["changelog"] or config.get("target_changelog")) and not options["dry_run"]:
-                TargetChangelogWriter(config["target"], profile_name).write(results, config)
+                try:
+                    TargetChangelogWriter(config["target"], profile_name).write(results, config)
+                except Exception as err:
+                    post_warnings.append(f"Changelog failed: {err}")
         self._last_result = results
         if error:
             summary = "[red]Run failed[/red]"
@@ -635,12 +808,22 @@ class RunProfileScreen(Screen):
             details = str(error)
         else:
             summary = _format_result_summary(results)
-            details = _format_run_details(profile_name, "profile", options, report_path, backup_status, [])
+            details = _format_run_details(profile_name, "profile", options, report_path, backup_status, [], post_warnings)
+            if post_warnings:
+                summary = f"[yellow]Run completed with post-run warnings[/yellow]\n\n{summary}"
         self._switch_to_results(summary, details)
-        self._set_status("Run cancelled." if isinstance(error, SyncCancelled) else "Run complete." if not error else f"Run failed: {error}")
+        if isinstance(error, SyncCancelled):
+            self._set_status("Run cancelled.")
+        elif error:
+            self._set_status(f"Run failed: {error}")
+        elif post_warnings:
+            self._set_status("Run complete with post-run warnings.")
+        else:
+            self._set_status("Run complete.")
 
     def _on_suite_complete(
         self,
+        run_id: int,
         suite_name: str,
         options: dict,
         runs: list,
@@ -649,6 +832,8 @@ class RunProfileScreen(Screen):
         cancelled: bool,
         error: Exception | None,
     ) -> None:
+        if not self._is_active_run(run_id):
+            return
         if runs:
             aggregate = _aggregate_results([result for _, _, result in runs])
             summary = _format_result_summary(aggregate)
@@ -658,7 +843,7 @@ class RunProfileScreen(Screen):
             summary = "[red]No profiles ran successfully[/red]"
         if error and not cancelled:
             summary += f"\n\n[red]{error}[/red]"
-        details = _format_run_details(suite_name, "suite", options, report_path, "per profile", skipped)
+        details = _format_run_details(suite_name, "suite", options, report_path, "per profile", skipped, [])
         self._switch_to_results(summary, details)
         self._set_status("Suite run cancelled." if cancelled else "Suite run complete." if not error else f"Suite run failed: {error}")
 
@@ -680,6 +865,10 @@ class RunProfileScreen(Screen):
             self._switch_to_selection()
             return
         self.app.pop_screen()
+
+    def action_force_quit(self) -> None:
+        """Immediately exit the app on Ctrl+C from the run screen."""
+        self.app.exit()
 
 
 def _aggregate_results(results_list: list[dict]) -> dict:
@@ -718,6 +907,7 @@ def _format_run_details(
     report_path: str | None,
     backup_status: str,
     skipped: list[tuple[str, str]],
+    post_warnings: list[str],
 ) -> str:
     lines = [
         f"[bold dim]{'Target:':<12}[/bold dim] {target_name}",
@@ -731,4 +921,9 @@ def _format_run_details(
         lines.append("[bold yellow]Skipped[/bold yellow]")
         for name, reason in skipped[:12]:
             lines.append(f"{name}: {reason}")
+    if post_warnings:
+        lines.append("")
+        lines.append("[bold yellow]Post-run warnings[/bold yellow]")
+        for warning in post_warnings[:12]:
+            lines.append(warning)
     return "\n".join(lines)

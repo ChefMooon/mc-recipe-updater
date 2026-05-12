@@ -29,6 +29,7 @@ class MCRecipeApp(App):
 
     BINDINGS = [
         ("q", "quit", "Quit"),
+        ("ctrl+c", "quit", "Quit"),
     ]
 
     TITLE = "mc-recipe-updater (mcru)"

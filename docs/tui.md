@@ -2,6 +2,8 @@
 
 Complete reference and user guide for the `mcru-tui` interactive mode.
 
+Baseline cross-screen standards (keybinding fallback policy, phase model, and testing expectations) are maintained in [docs/tui-screen-standards.md](docs/tui-screen-standards.md).
+
 ---
 
 ## Overview
@@ -307,11 +309,27 @@ syncer.start()  # Runs in background
 
 | Key | Action |
 |-----|--------|
-| `↑` / `↓` | Navigate profile/suite list |
-| `Space` | Start sync |
+| `↑` / `↓` | Navigate profile/suite list (section 1) or navigate options (section 2, if focused there) |
+| `Space` | Start sync (unless focused on a checkbox option, then toggles the checkbox) |
 | `Tab` | Toggle Profile/Suite mode before running |
 | `r` | Re-run after completion |
+| `Ctrl+1/2/3` | Jump to section 1/2/3 |
+| `Alt+1/2/3`, `F1/F2/F3` | Alternative section navigation keys |
 | `Escape` | Cancel (during run) / Back to selection (after completion) |
+
+**Option Navigation Details (Section 2):**
+When focus is in the Options panel (section 2), use `Up` and `Down` arrows to cycle through available run options:
+- **Dry run** (checkbox)
+- **Create backups** (checkbox)
+- **Force target changelog** (checkbox)
+- **Source override** (text input)
+- **Target override** (text input)
+- **Mapping override** (text input)
+
+Navigation wraps around: pressing Down on the last option cycles to the first, and Up on the first cycles to the last.
+
+**Checkbox Behavior:**
+When focus is on a checkbox option, press `Space` to toggle the option value (e.g., enable/disable dry run). This does **not** start the sync—it only toggles the checkbox. To start the sync, press `Space` while focus is on the profile/suite list (section 1), or click the Start button.
 
 ### Reports Screen (Phase 5)
 
