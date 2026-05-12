@@ -12,6 +12,7 @@ from textual.widgets import Static, ListView, ListItem, Label, Input, Checkbox, 
 from textual.binding import Binding
 from config import ConfigManager
 from registry import list_parsers
+from typing import Any
 
 
 # ── Helpers ──────────────────────────────────────
@@ -326,6 +327,10 @@ class ProfileList(Container):
         padding: 0;
     }
 
+    ProfileList:focus {
+        border: heavy $accent;
+    }
+
     ProfileList ListView {
         width: 1fr;
         height: 1fr;
@@ -353,7 +358,8 @@ class ProfileList(Container):
     """
 
     def __init__(self, profiles: list, mode_label: str = ""):
-        super().__init__()
+        super().__init__(id="profile-list")
+        self.can_focus = True
         title = "[1] Profiles"
         if mode_label:
             title += f"  [dim]{mode_label}[/dim]"
@@ -384,6 +390,10 @@ class ProfileDetail(Container):
         padding: 1 2;
     }
 
+    ProfileDetail:focus {
+        border: heavy $accent;
+    }
+
     ProfileDetail #detail-content {
         width: 1fr;
         height: 1fr;
@@ -391,7 +401,8 @@ class ProfileDetail(Container):
     """
 
     def __init__(self):
-        super().__init__()
+        super().__init__(id="profile-detail")
+        self.can_focus = True
         self.border_title = "[2] Details"
         self._content = Static("Select a profile to view details", id="detail-content")
 
@@ -463,6 +474,10 @@ class ActionBar(Container):
         align: left middle;
     }
 
+    ActionBar:focus {
+        border: heavy $accent;
+    }
+
     ActionBar #action-keys {
         width: 1fr;
         height: 1;
@@ -470,7 +485,8 @@ class ActionBar(Container):
     """
 
     def __init__(self):
-        super().__init__()
+        super().__init__(id="action-bar")
+        self.can_focus = True
         self.border_title = "[3] Actions"
 
     def compose(self):
@@ -509,7 +525,18 @@ class ProfilesScreen(Screen):
     }
 
     BINDINGS = [
+        Binding("ctrl+c", "force_quit", "Force Quit", show=False),
         Binding("escape", "back", "Back", show=False),
+        Binding("q", "back", "Back", show=False),
+        Binding("ctrl+1", "focus_section_1", "Section 1", show=False),
+        Binding("ctrl+2", "focus_section_2", "Section 2", show=False),
+        Binding("ctrl+3", "focus_section_3", "Section 3", show=False),
+        Binding("alt+1", "focus_section_1", "Section 1", show=False),
+        Binding("alt+2", "focus_section_2", "Section 2", show=False),
+        Binding("alt+3", "focus_section_3", "Section 3", show=False),
+        Binding("f1", "focus_section_1", "Section 1", show=False),
+        Binding("f2", "focus_section_2", "Section 2", show=False),
+        Binding("f3", "focus_section_3", "Section 3", show=False),
         Binding("a", "add_profile", "Add", show=False),
         Binding("e", "edit_profile", "Edit", show=False),
         Binding("d", "delete_profile", "Delete", show=False),
@@ -631,6 +658,36 @@ class ProfilesScreen(Screen):
     def action_back(self) -> None:
         """Return to home screen."""
         self.app.pop_screen()
+
+    def action_force_quit(self) -> None:
+        """Immediately quit the TUI on Ctrl+C."""
+        self.app.exit()
+
+    def action_focus_section_1(self) -> None:
+        """Focus the profile list (section 1)."""
+        # Try to focus the ListView inside the ProfileList first
+        if not self._focus_widget("#profile-listview", ListView):
+            # Fall back to focusing the ProfileList container itself
+            if not self._focus_widget("#profile-list", Container):
+                self._set_status("[dim]Profile list not focusable right now[/dim]")
+
+    def action_focus_section_2(self) -> None:
+        """Focus the profile detail panel (section 2)."""
+        if not self._focus_widget("#profile-detail", Container):
+            self._set_status("[dim]Detail panel not focusable right now[/dim]")
+
+    def action_focus_section_3(self) -> None:
+        """Focus the action bar (section 3)."""
+        if not self._focus_widget("#action-bar", Container):
+            self._set_status("[dim]Action bar not focusable right now[/dim]")  
+
+    def _focus_widget(self, selector: str, widget_type: type[Any]) -> bool:
+        """Try to focus a widget by selector and type. Returns True if successful."""
+        try:
+            self.query_one(selector, widget_type).focus()
+            return True
+        except Exception:
+            return False
 
     def action_add_profile(self) -> None:
         """Open add profile modal."""

@@ -294,6 +294,12 @@ syncer.start()  # Runs in background
 | `e` | Edit selected |
 | `d` | Delete selected |
 | `v` | Verify paths |
+| `s` | Cycle sort mode |
+| `Shift+s` | Save sort order |
+| `Ctrl+1/2/3` | Jump to section 1 (list) / 2 (details) / 3 (actions) |
+| `Alt+1/2/3`, `F1/F2/F3` | Alternative section navigation keys |
+| `Escape` / `q` | Back to home screen |
+| `Ctrl+C` | Quit TUI immediately |
 
 ### Suite Screen (Phase 3)
 
