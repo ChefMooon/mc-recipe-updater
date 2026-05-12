@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 from textual.screen import Screen, ModalScreen
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Static, Input
@@ -44,7 +45,8 @@ class PathsPanel(Container):
     """
 
     def __init__(self):
-        super().__init__()
+        super().__init__(id="config-paths")
+        self.can_focus = True
         self.border_title = "[1] Paths"
         self._content = Static("", id="paths-content")
 
@@ -84,7 +86,8 @@ class ConfigActionsPanel(Container):
     """
 
     def __init__(self):
-        super().__init__()
+        super().__init__(id="config-actions")
+        self.can_focus = True
         self.border_title = "[2] Actions"
         self._content = Static("", id="actions-content")
 
@@ -124,7 +127,8 @@ class ConfigActionBar(Container):
     """
 
     def __init__(self):
-        super().__init__()
+        super().__init__(id="config-action-bar")
+        self.can_focus = True
         self.border_title = "[3] Keys"
 
     def compose(self):
@@ -268,7 +272,18 @@ class ConfigScreen(Screen):
     """Configuration and settings screen."""
 
     BINDINGS = [
+        Binding("ctrl+c", "force_quit", "Force Quit", show=False),
         Binding("escape", "back", "Back", show=False),
+        Binding("q", "back", "Back", show=False),
+        Binding("ctrl+1", "focus_section_1", "Section 1", show=False),
+        Binding("ctrl+2", "focus_section_2", "Section 2", show=False),
+        Binding("ctrl+3", "focus_section_3", "Section 3", show=False),
+        Binding("alt+1", "focus_section_1", "Section 1", show=False),
+        Binding("alt+2", "focus_section_2", "Section 2", show=False),
+        Binding("alt+3", "focus_section_3", "Section 3", show=False),
+        Binding("f1", "focus_section_1", "Section 1", show=False),
+        Binding("f2", "focus_section_2", "Section 2", show=False),
+        Binding("f3", "focus_section_3", "Section 3", show=False),
         Binding("o", "open_config_dir", "Open", show=False),
         Binding("v", "view_presets", "View", show=False),
         Binding("r", "reset_presets", "Reset Presets", show=False),
@@ -330,6 +345,28 @@ class ConfigScreen(Screen):
     def _set_status(self, message: str) -> None:
         if self._status_bar:
             self._status_bar.update(message)
+
+    def _focus_widget(self, selector: str, widget_type: type[Any]) -> bool:
+        try:
+            self.query_one(selector, widget_type).focus()
+            return True
+        except Exception:
+            return False
+
+    def action_force_quit(self) -> None:
+        self.app.exit()
+
+    def action_focus_section_1(self) -> None:
+        if not self._focus_widget("#config-paths", Container):
+            self._set_status("[dim]Paths section not focusable right now[/dim]")
+
+    def action_focus_section_2(self) -> None:
+        if not self._focus_widget("#config-actions", Container):
+            self._set_status("[dim]Settings/actions section not focusable right now[/dim]")
+
+    def action_focus_section_3(self) -> None:
+        if not self._focus_widget("#config-action-bar", Container):
+            self._set_status("[dim]Actions section not focusable right now[/dim]")
 
     def action_open_config_dir(self) -> None:
         if not CONFIG_DIR.exists():

@@ -182,6 +182,11 @@ The status bar provides immediate feedback for all operations in place of a phas
 - `v` → View selected report
 - `d` → Delete selected report
 - `p` → Prune old reports
+- `q` / `Esc` → Back to home; if search is open, first closes and clears search
+- `Ctrl+C` → Quit TUI immediately
+- `Ctrl+1` / `Alt+1` / `F1` → Focus Reports list (Section 1)
+- `Ctrl+2` / `Alt+2` / `F2` → Focus Details panel (Section 2)
+- `Ctrl+3` / `Alt+3` / `F3` → Focus Actions bar (Section 3)
 
 ### Phase 5+: Backup Management (Complete)
 
@@ -194,6 +199,18 @@ Full backup management is available in the TUI:
 - **Prune backups** — Keep the newest N backups, with preview and confirmation
 
 See [docs/backups.md](backups.md) for complete CLI reference.
+
+**Key bindings:**
+- `v` → View selected backup contents
+- `r` → Restore selected backup
+- `p` → Pin/unpin selected backup
+- `d` → Delete selected backup
+- `P` → Prune backups
+- `q` / `Esc` → Back to home
+- `Ctrl+C` → Quit TUI immediately
+- `Ctrl+1` / `Alt+1` / `F1` → Focus Backups list (Section 1)
+- `Ctrl+2` / `Alt+2` / `F2` → Focus Details panel (Section 2)
+- `Ctrl+3` / `Alt+3` / `F3` → Focus Actions bar (Section 3)
 
 ### Phase 6: Configuration (Complete)
 
@@ -215,6 +232,14 @@ See [docs/backups.md](backups.md) for complete CLI reference.
 - `v` → View presets
 - `r` → Reset presets
 - `R` → Reset all (with confirmation)
+- `q` / `Esc` → Back to home
+- `Ctrl+C` → Quit TUI immediately
+- `Ctrl+1` / `Alt+1` / `F1` → Focus Paths panel (Section 1)
+- `Ctrl+2` / `Alt+2` / `F2` → Focus Settings/actions panel (Section 2)
+- `Ctrl+3` / `Alt+3` / `F3` → Focus Keys bar (Section 3)
+
+**Deviation from TUI Screen Standards:**
+Config is a static settings and maintenance screen rather than a CRUD or execution workflow. It follows the global quit/back and section keybinding policy, but keeps a static Paths / Actions / Keys layout instead of introducing a phase model or interactive list. Section focus keys are focus-only and never trigger open, reset, or destructive actions.
 
 ---
 

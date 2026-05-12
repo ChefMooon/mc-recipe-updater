@@ -1,6 +1,7 @@
 """Reports browser screen."""
 
 from pathlib import Path
+from typing import Any
 from textual.screen import Screen, ModalScreen
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Static, ListView, ListItem, Label, Input
@@ -61,7 +62,8 @@ class ReportList(Container):
     """
 
     def __init__(self, reports: list[dict], filter_text: str = ""):
-        super().__init__()
+        super().__init__(id="report-list")
+        self.can_focus = True
         self.reports = reports
         self.border_title = "[1] Reports" + (f"  [dim]/{filter_text}[/dim]" if filter_text else "")
 
@@ -93,7 +95,8 @@ class ReportDetail(Container):
     """
 
     def __init__(self):
-        super().__init__()
+        super().__init__(id="report-detail")
+        self.can_focus = True
         self.border_title = "[2] Details"
         self._content = Static("Select a report to view details", id="detail-content")
 
@@ -137,7 +140,8 @@ class ReportActionBar(Container):
     """
 
     def __init__(self):
-        super().__init__()
+        super().__init__(id="report-actions")
+        self.can_focus = True
         self.border_title = "[3] Actions"
 
     def compose(self):
@@ -303,7 +307,18 @@ class ReportsScreen(Screen):
     """Report viewing and search screen."""
 
     BINDINGS = [
+        Binding("ctrl+c", "force_quit", "Force Quit", show=False),
         Binding("escape", "back", "Back", show=False),
+        Binding("q", "back", "Back", show=False),
+        Binding("ctrl+1", "focus_section_1", "Section 1", show=False),
+        Binding("ctrl+2", "focus_section_2", "Section 2", show=False),
+        Binding("ctrl+3", "focus_section_3", "Section 3", show=False),
+        Binding("alt+1", "focus_section_1", "Section 1", show=False),
+        Binding("alt+2", "focus_section_2", "Section 2", show=False),
+        Binding("alt+3", "focus_section_3", "Section 3", show=False),
+        Binding("f1", "focus_section_1", "Section 1", show=False),
+        Binding("f2", "focus_section_2", "Section 2", show=False),
+        Binding("f3", "focus_section_3", "Section 3", show=False),
         Binding("/", "search", "Search", show=False),
         Binding("enter", "view_report", "View", show=False),
         Binding("v", "view_report", "View", show=False),
@@ -417,6 +432,29 @@ class ReportsScreen(Screen):
     def _set_status(self, message: str) -> None:
         if self._status_bar:
             self._status_bar.update(message)
+
+    def _focus_widget(self, selector: str, widget_type: type[Any]) -> bool:
+        try:
+            self.query_one(selector, widget_type).focus()
+            return True
+        except Exception:
+            return False
+
+    def action_force_quit(self) -> None:
+        self.app.exit()
+
+    def action_focus_section_1(self) -> None:
+        if not self._focus_widget("#report-listview", ListView):
+            if not self._focus_widget("#report-list", Container):
+                self._set_status("[dim]Reports list not focusable right now[/dim]")
+
+    def action_focus_section_2(self) -> None:
+        if not self._focus_widget("#report-detail", Container):
+            self._set_status("[dim]Details section not focusable right now[/dim]")
+
+    def action_focus_section_3(self) -> None:
+        if not self._focus_widget("#report-actions", Container):
+            self._set_status("[dim]Actions section not focusable right now[/dim]")
 
     def action_search(self) -> None:
         search = self.query_one("#search-input", Input)
