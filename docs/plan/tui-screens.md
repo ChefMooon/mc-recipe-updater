@@ -13,7 +13,7 @@ Use [docs/tui-screen-standards.md](docs/tui-screen-standards.md) as the source o
 | Screen | File | Status |
 |--------|------|--------|
 | [Home](#1-home-screen) | `tui/screens/home.py` | Implemented |
-| [Profiles](#2-profiles-screen) | `tui/screens/profiles.py` | Implemented x |
+| [Profiles](#2-profiles-screen) | `tui/screens/profiles.py` | Implemented |
 | [Suites](#3-suites-screen) | `tui/screens/suites.py` | Implemented |
 | [Run](#4-run-screen) | `tui/screens/run_profile.py` | Implemented |
 | [Reports](#5-reports-screen) | `tui/screens/reports.py` | Implemented |

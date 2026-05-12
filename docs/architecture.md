@@ -293,6 +293,7 @@ tui/
 │   ├── suites.py        Suite management (Phase 3)
 │   ├── run_profile.py   Sync execution with progress (Phase 4)
 │   ├── reports.py       Report viewing (Phase 5)
+│   ├── backups.py       Backup management
 │   └── config.py        Configuration screen (Phase 6)
 └── widgets/
     ├── __init__.py

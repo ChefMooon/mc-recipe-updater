@@ -32,10 +32,23 @@ def _empty_results():
     }
 
 
+class _FakeApp:
+    def __init__(self):
+        self.exited = False
+        self.popped = False
+
+    def exit(self):
+        self.exited = True
+
+    def pop_screen(self):
+        self.popped = True
+
+
 def test_run_screen_has_primary_and_fallback_section_bindings():
     keys = {binding.key for binding in run_profile.RunProfileScreen.BINDINGS}
 
     assert "ctrl+c" in keys
+    assert "q" in keys
     assert "ctrl+1" in keys
     assert "ctrl+2" in keys
     assert "ctrl+3" in keys
@@ -295,3 +308,35 @@ def test_section_2_focus_entry_lands_on_first_option(monkeypatch):
     screen._focus_option_by_index(0)
     
     assert focused_option["id"] == "option-dry-run"
+
+
+def test_run_force_quit_exits_app(monkeypatch):
+    screen = run_profile.RunProfileScreen(_DummyConfigManager())
+    app = _FakeApp()
+    monkeypatch.setattr(run_profile.RunProfileScreen, "app", property(lambda _self: app))
+
+    screen.action_force_quit()
+
+    assert app.exited is True
+
+
+def test_run_back_pops_screen_in_selection_phase(monkeypatch):
+    screen = run_profile.RunProfileScreen(_DummyConfigManager())
+    screen._phase = "selection"
+    app = _FakeApp()
+    monkeypatch.setattr(run_profile.RunProfileScreen, "app", property(lambda _self: app))
+
+    screen.action_back()
+
+    assert app.popped is True
+
+
+def test_run_back_returns_to_selection_from_done_phase(monkeypatch):
+    screen = run_profile.RunProfileScreen(_DummyConfigManager())
+    screen._phase = "done"
+    called = {"selection": False}
+    monkeypatch.setattr(screen, "_switch_to_selection", lambda: called.update(selection=True))
+
+    screen.action_back()
+
+    assert called["selection"] is True

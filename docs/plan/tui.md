@@ -1,6 +1,6 @@
 # Plan: Add Optional TUI with Textual
 
-**Status:** Basic setup phase
+**Status:** Implemented baseline; ongoing test/consistency hardening
 
 ---
 

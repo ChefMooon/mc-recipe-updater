@@ -370,7 +370,9 @@ syncer.start()  # Runs in background
 | `r` | Re-run after completion |
 | `Ctrl+1/2/3` | Jump to section 1/2/3 |
 | `Alt+1/2/3`, `F1/F2/F3` | Alternative section navigation keys |
+| `q` | Back (same behavior as Escape) |
 | `Escape` | Cancel (during run) / Back to selection (after completion) |
+| `Ctrl+C` | Quit TUI immediately |
 
 **Option Navigation Details (Section 2):**
 When focus is in the Options panel (section 2), use `Up` and `Down` arrows to cycle through available run options:
@@ -408,7 +410,9 @@ When focus is on a checkbox option, press `Space` to toggle the option value (e.
 | `p` | Pin/unpin selected backup |
 | `d` | Delete selected backup |
 | `P` | Prune old backups |
+| `q` | Back to home screen |
 | `Escape` | Back to home screen |
+| `Ctrl+C` | Quit TUI immediately |
 
 ### Config Screen (Phase 6)
 

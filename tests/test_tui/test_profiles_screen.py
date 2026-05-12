@@ -21,6 +21,18 @@ from textual.app import App, ComposeResult
 from textual.containers import Container
 
 
+class _FakeApp:
+    def __init__(self):
+        self.exited = False
+        self.popped = False
+
+    def exit(self):
+        self.exited = True
+
+    def pop_screen(self):
+        self.popped = True
+
+
 # ── Keybinding Tests ─────────────────────────────
 
 class TestProfilesScreenKeybindings:
@@ -219,6 +231,26 @@ class TestProfilesScreenBackActions:
         # Back action should exist and be callable
         assert hasattr(screen, "action_back"), "Missing action_back"
         assert callable(screen.action_back), "action_back should be callable"
+
+    def test_action_back_calls_pop_screen(self, monkeypatch):
+        config = ConfigManager()
+        screen = ProfilesScreen(config)
+        app = _FakeApp()
+        monkeypatch.setattr(ProfilesScreen, "app", property(lambda _self: app))
+
+        screen.action_back()
+
+        assert app.popped is True
+
+    def test_action_force_quit_calls_exit(self, monkeypatch):
+        config = ConfigManager()
+        screen = ProfilesScreen(config)
+        app = _FakeApp()
+        monkeypatch.setattr(ProfilesScreen, "app", property(lambda _self: app))
+
+        screen.action_force_quit()
+
+        assert app.exited is True
 
 
 # ── Modal Interaction Tests ──────────────────────

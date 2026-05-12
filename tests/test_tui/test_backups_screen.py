@@ -26,6 +26,18 @@ class _StatusRecorder:
         self.message = message
 
 
+class _FakeApp:
+    def __init__(self):
+        self.exited = False
+        self.popped = False
+
+    def exit(self):
+        self.exited = True
+
+    def pop_screen(self):
+        self.popped = True
+
+
 def _bindings():
     return {binding.key: binding for binding in BackupsScreen.BINDINGS}
 
@@ -87,3 +99,23 @@ def test_backups_sections_have_focus_targets():
     assert detail.can_focus is True
     assert BackupActionBar().id == "backup-actions"
     assert BackupActionBar().can_focus is True
+
+
+def test_backups_back_calls_pop_screen(monkeypatch):
+    screen = BackupsScreen(ConfigManager())
+    app = _FakeApp()
+    monkeypatch.setattr(BackupsScreen, "app", property(lambda _self: app))
+
+    screen.action_back()
+
+    assert app.popped is True
+
+
+def test_backups_force_quit_calls_exit(monkeypatch):
+    screen = BackupsScreen(ConfigManager())
+    app = _FakeApp()
+    monkeypatch.setattr(BackupsScreen, "app", property(lambda _self: app))
+
+    screen.action_force_quit()
+
+    assert app.exited is True

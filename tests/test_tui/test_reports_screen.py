@@ -26,6 +26,18 @@ class _StatusRecorder:
         self.message = message
 
 
+class _FakeApp:
+    def __init__(self):
+        self.exited = False
+        self.popped = False
+
+    def exit(self):
+        self.exited = True
+
+    def pop_screen(self):
+        self.popped = True
+
+
 def _bindings():
     return {binding.key: binding for binding in ReportsScreen.BINDINGS}
 
@@ -97,3 +109,29 @@ def test_reports_sections_have_focus_targets():
     assert ReportDetail().can_focus is True
     assert ReportActionBar().id == "report-actions"
     assert ReportActionBar().can_focus is True
+
+
+def test_reports_back_pops_screen_when_search_hidden(monkeypatch):
+    screen = ReportsScreen(ConfigManager())
+    app = _FakeApp()
+
+    class _SearchInput:
+        display = False
+        value = ""
+
+    monkeypatch.setattr(ReportsScreen, "app", property(lambda _self: app))
+    monkeypatch.setattr(screen, "query_one", lambda *_args, **_kwargs: _SearchInput())
+
+    screen.action_back()
+
+    assert app.popped is True
+
+
+def test_reports_force_quit_calls_exit(monkeypatch):
+    screen = ReportsScreen(ConfigManager())
+    app = _FakeApp()
+    monkeypatch.setattr(ReportsScreen, "app", property(lambda _self: app))
+
+    screen.action_force_quit()
+
+    assert app.exited is True

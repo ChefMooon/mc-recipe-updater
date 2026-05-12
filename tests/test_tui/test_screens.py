@@ -4,6 +4,7 @@ TUI screen tests.
 
 import pytest
 from tui.screens.suites import ManageProfilesScreen, SuiteActionBar, SuitesScreen
+from tui.screens.home import HomeScreen
 
 
 class _DummySuitesConfigManager:
@@ -26,6 +27,18 @@ class _DummyPanelsRow:
 
     def mount(self, _widget, before=None):
         self._events.append(("mount", before))
+
+
+class _FakeApp:
+    def __init__(self):
+        self.exited = False
+        self.popped = False
+
+    def exit(self):
+        self.exited = True
+
+    def pop_screen(self):
+        self.popped = True
 
 
 class TestSuitesScreenBindings:
@@ -52,6 +65,24 @@ class TestSuitesScreenBindings:
     def test_ctrl_c_routes_to_force_quit(self):
         actions = {b.key: b.action for b in SuitesScreen.BINDINGS}
         assert actions["ctrl+c"] == "force_quit"
+
+    def test_suites_force_quit_calls_exit(self, monkeypatch):
+        screen = SuitesScreen(_DummySuitesConfigManager())
+        app = _FakeApp()
+        monkeypatch.setattr(SuitesScreen, "app", property(lambda _self: app))
+
+        screen.action_force_quit()
+
+        assert app.exited is True
+
+    def test_suites_back_calls_pop_screen(self, monkeypatch):
+        screen = SuitesScreen(_DummySuitesConfigManager())
+        app = _FakeApp()
+        monkeypatch.setattr(SuitesScreen, "app", property(lambda _self: app))
+
+        screen.action_back()
+
+        assert app.popped is True
 
     def test_focus_section_actions_not_exposed(self):
         """SuitesScreen intentionally disables section-to-section key navigation."""
@@ -148,6 +179,24 @@ class TestManageProfilesScreenBindings:
         actions = {b.key: b.action for b in ManageProfilesScreen.BINDINGS}
         assert actions["ctrl+c"] == "force_quit"
 
+    def test_manage_profiles_force_quit_calls_exit(self, monkeypatch):
+        screen = ManageProfilesScreen(_DummySuitesConfigManager(), "demo")
+        app = _FakeApp()
+        monkeypatch.setattr(ManageProfilesScreen, "app", property(lambda _self: app))
+
+        screen.action_force_quit()
+
+        assert app.exited is True
+
+    def test_manage_profiles_back_calls_pop_screen(self, monkeypatch):
+        screen = ManageProfilesScreen(_DummySuitesConfigManager(), "demo")
+        app = _FakeApp()
+        monkeypatch.setattr(ManageProfilesScreen, "app", property(lambda _self: app))
+
+        screen.action_back()
+
+        assert app.popped is True
+
     def test_section_keys_are_focus_only(self):
         """Section focus keys must not map to destructive actions."""
         section_keys = {
@@ -211,6 +260,16 @@ def test_home_screen_exists():
     """Placeholder test - home screen should be importable."""
     from tui.screens.home import HomeScreen
     assert HomeScreen is not None
+
+
+def test_home_force_quit_calls_exit(monkeypatch):
+    screen = HomeScreen(_DummySuitesConfigManager())
+    app = _FakeApp()
+    monkeypatch.setattr(HomeScreen, "app", property(lambda _self: app))
+
+    screen.action_force_quit()
+
+    assert app.exited is True
 
 
 def test_profiles_screen_exists():

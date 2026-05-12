@@ -275,6 +275,7 @@ class RunProfileScreen(Screen):
 
     BINDINGS = [
         Binding("escape", "back", "Back", show=False),
+        Binding("q", "back", "Back", show=False),
         Binding("ctrl+c", "force_quit", "Force Quit", show=False),
         Binding("space", "start_run", "Start", show=False),
         Binding("tab", "toggle_mode", "Toggle", show=False),
@@ -338,8 +339,6 @@ class RunProfileScreen(Screen):
         self._last_selection: str | None = None
         self._last_result: dict | None = None
         self._run_id: int = 0
-        self._option_order = ["option-dry-run", "option-backup", "option-changelog", "option-source", "option-target", "option-mapping"]
-        self._focused_option_index = 0
         self._option_order = ["option-dry-run", "option-backup", "option-changelog", "option-source", "option-target", "option-mapping"]
         self._focused_option_index = 0
 

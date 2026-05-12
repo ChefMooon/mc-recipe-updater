@@ -26,6 +26,18 @@ class _StatusRecorder:
         self.message = message
 
 
+class _FakeApp:
+    def __init__(self):
+        self.exited = False
+        self.popped = False
+
+    def exit(self):
+        self.exited = True
+
+    def pop_screen(self):
+        self.popped = True
+
+
 def _bindings():
     return {binding.key: binding for binding in ConfigScreen.BINDINGS}
 
@@ -84,3 +96,23 @@ def test_config_sections_have_focus_targets():
     assert ConfigActionsPanel().can_focus is True
     assert ConfigActionBar().id == "config-action-bar"
     assert ConfigActionBar().can_focus is True
+
+
+def test_config_back_calls_pop_screen(monkeypatch):
+    screen = ConfigScreen(ConfigManager())
+    app = _FakeApp()
+    monkeypatch.setattr(ConfigScreen, "app", property(lambda _self: app))
+
+    screen.action_back()
+
+    assert app.popped is True
+
+
+def test_config_force_quit_calls_exit(monkeypatch):
+    screen = ConfigScreen(ConfigManager())
+    app = _FakeApp()
+    monkeypatch.setattr(ConfigScreen, "app", property(lambda _self: app))
+
+    screen.action_force_quit()
+
+    assert app.exited is True
