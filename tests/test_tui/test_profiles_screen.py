@@ -138,6 +138,42 @@ class TestProfilesScreenContainerIDs:
             "ActionBar should have id='action-bar' for focus targeting"
 
 
+class TestProfilesScreenHighlightStyling:
+    """Verify the profile screen does not use custom highlight styling."""
+
+    def test_profile_list_has_no_custom_highlight_rules(self):
+        """ProfileList should not define any custom highlight styling."""
+        from tui.screens.profiles import ProfileList
+
+        css = ProfileList.DEFAULT_CSS
+
+        assert "ProfileList ListView > ListItem.--highlight" not in css
+        assert "ProfileList ListView:focus > ListItem.--highlight" not in css
+
+    def test_profile_detail_has_no_focus_border_rule(self):
+        """ProfileDetail should not define a focused accent border."""
+        from tui.screens.profiles import ProfileDetail
+
+        css = ProfileDetail.DEFAULT_CSS
+
+        assert "ProfileDetail:focus" not in css
+
+    def test_profile_list_has_no_focus_border_rule(self):
+        """ProfileList should not define a focused accent border."""
+        from tui.screens.profiles import ProfileList
+
+        css = ProfileList.DEFAULT_CSS
+
+        assert "ProfileList:focus" not in css
+
+    def test_action_bar_has_no_focus_border_rule(self):
+        """ActionBar should not define a focused accent border."""
+        from tui.screens.profiles import ActionBar
+
+        css = ActionBar.DEFAULT_CSS
+
+        assert "ActionBar:focus" not in css
+
 # ── Focus-Only Safety Tests ──────────────────────
 
 class TestFocusOnlySafety:

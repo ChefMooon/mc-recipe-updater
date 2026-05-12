@@ -327,10 +327,6 @@ class ProfileList(Container):
         padding: 0;
     }
 
-    ProfileList:focus {
-        border: heavy $accent;
-    }
-
     ProfileList ListView {
         width: 1fr;
         height: 1fr;
@@ -343,18 +339,6 @@ class ProfileList(Container):
         background: $surface;
     }
 
-    ProfileList ListView > ListItem.--highlight {
-        background: $primary 30%;
-    }
-
-    ProfileList ListView:focus > ListItem.--highlight {
-        background: $primary 50%;
-    }
-
-    ProfileList ListView > ListItem.--highlight Label {
-        color: $text;
-        text-style: bold;
-    }
     """
 
     def __init__(self, profiles: list, mode_label: str = ""):
@@ -388,10 +372,6 @@ class ProfileDetail(Container):
         border-title-color: $text;
         border-title-style: bold;
         padding: 1 2;
-    }
-
-    ProfileDetail:focus {
-        border: heavy $accent;
     }
 
     ProfileDetail #detail-content {
@@ -472,10 +452,6 @@ class ActionBar(Container):
         border-title-style: bold;
         padding: 0 1;
         align: left middle;
-    }
-
-    ActionBar:focus {
-        border: heavy $accent;
     }
 
     ActionBar #action-keys {
