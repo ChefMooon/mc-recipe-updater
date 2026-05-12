@@ -113,6 +113,30 @@ The home screen will display:
 - `e` → Edit selected
 - `d` → Delete selected
 - `m` → Manage profiles in suite
+- `q` / `Esc` → Back to home
+- `Ctrl+C` → Quit TUI immediately
+
+**Navigation note:**
+- The main Suites screen does not expose section-to-section navigation keys.
+- Section headers on this screen are unlabeled by number because only the suite list is directly interactive.
+
+**Manage Profiles sub-screen** (opened with `m` from the suite list):
+- `a` → Add selected available profile to suite
+- `d` → Remove selected in-suite profile
+- `[` / `]` → Reorder selected profile up / down
+- `Tab` → Switch between In Suite and Available panels
+- `q` / `Esc` → Back to suite list
+- `Ctrl+C` → Quit TUI immediately
+- `Ctrl+1` / `Alt+1` / `F1` → Focus In Suite panel (Section 1)
+- `Ctrl+2` / `Alt+2` / `F2` → Focus Available panel (Section 2)
+- `Ctrl+3` / `Alt+3` / `F3` → Actions bar (not interactively focusable; a status message is shown)
+
+**Deviations from TUI Screen Standards:**
+The Suites screen is a synchronous CRUD management screen. The following standard items are inapplicable:
+- **Phase model** (`selection` / `running` / `done`): Not applicable — all operations are immediate synchronous config writes with no async execution phase.
+- **Threading and callback safety** (run tokens, stale callback rejection): Not applicable — no background threads are used.
+
+The status bar provides immediate feedback for all operations in place of a phase-driven outcome model.
 
 ### Phase 4: Sync Execution (Complete)
 

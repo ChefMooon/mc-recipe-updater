@@ -186,6 +186,8 @@ class SuiteListItem(ListItem):
 class SuiteList(Container):
     """Bordered suite list panel."""
 
+    can_focus = True
+
     DEFAULT_CSS = """
     SuiteList {
         width: 1fr;
@@ -224,7 +226,7 @@ class SuiteList(Container):
 
     def __init__(self, suites: list[dict]):
         super().__init__()
-        self.border_title = "[1] Suites"
+        self.border_title = "Suites"
         self.suites = suites
 
     def compose(self):
@@ -256,7 +258,7 @@ class SuiteDetail(Container):
     def __init__(self, config_manager: ConfigManager):
         super().__init__()
         self.config_manager = config_manager
-        self.border_title = "[2] Details"
+        self.border_title = "Details"
         self._content = Static("Select a suite to view details", id="detail-content")
 
     def compose(self):
@@ -308,7 +310,7 @@ class SuiteActionBar(Container):
 
     def __init__(self):
         super().__init__()
-        self.border_title = "[3] Actions"
+        self.border_title = "Actions"
 
     def compose(self):
         yield Static(
@@ -340,44 +342,66 @@ class InSuitePanel(Container):
     """Panel listing profiles currently in a suite."""
 
     def __init__(self, config_manager: ConfigManager, profile_names: list[str]):
-        super().__init__(id="in-suite-panel", classes="manage-panel")
+        super().__init__(classes="manage-panel")
         self.config_manager = config_manager
         self.profile_names = profile_names
+        self.listview: ListView | None = None
         self.border_title = "[1] In Suite"
 
     def compose(self):
         if self.profile_names:
-            yield ListView(
+            self.listview = ListView(
                 *[
                     ManageProfileItem(name, self.config_manager.get_profile(name) is None)
                     for name in self.profile_names
-                ],
-                id="in-suite-listview",
+                ]
             )
+            yield self.listview
         else:
-            yield Static(" (no profiles)", id="in-suite-empty")
+            self.listview = None
+            yield Static(" (no profiles)")
 
 
 class AvailablePanel(Container):
     """Panel listing profiles not currently in a suite."""
 
     def __init__(self, profile_names: list[str]):
-        super().__init__(id="available-panel", classes="manage-panel")
+        super().__init__(classes="manage-panel")
         self.profile_names = profile_names
+        self.listview: ListView | None = None
         self.border_title = "[2] Available"
 
     def compose(self):
         if self.profile_names:
-            yield ListView(*[ManageProfileItem(name) for name in self.profile_names], id="available-listview")
+            self.listview = ListView(*[ManageProfileItem(name) for name in self.profile_names])
+            yield self.listview
         else:
-            yield Static(" (no available profiles)", id="available-empty")
+            self.listview = None
+            yield Static(" (no available profiles)")
 
 
 class ManageProfilesScreen(Screen):
     """Manage ordered profiles inside a suite."""
 
+    ACTIONS_TEXT = (
+        "[bold green]a[/bold green]: Add  [bold red]d[/bold red]: Remove  "
+        "[bold cyan]\\[[/bold cyan]/[bold cyan]\\][/bold cyan]: Reorder  "
+        "[bold cyan]Tab[/bold cyan]: Switch panel  [bold dim]Esc[/bold dim]: Back"
+    )
+
     BINDINGS = [
         Binding("escape", "back", "Back", show=False),
+        Binding("q", "back", "Back", show=False),
+        Binding("ctrl+c", "force_quit", "Quit", show=False),
+        Binding("ctrl+1", "focus_section_1", "Section 1", show=False),
+        Binding("ctrl+2", "focus_section_2", "Section 2", show=False),
+        Binding("ctrl+3", "focus_section_3", "Section 3", show=False),
+        Binding("alt+1", "focus_section_1", "Section 1", show=False),
+        Binding("alt+2", "focus_section_2", "Section 2", show=False),
+        Binding("alt+3", "focus_section_3", "Section 3", show=False),
+        Binding("f1", "focus_section_1", "Section 1", show=False),
+        Binding("f2", "focus_section_2", "Section 2", show=False),
+        Binding("f3", "focus_section_3", "Section 3", show=False),
         Binding("tab", "toggle_panel", "Switch", show=False),
         Binding("a", "add_profile", "Add", show=False),
         Binding("d", "remove_profile", "Remove", show=False),
@@ -459,8 +483,8 @@ class ManageProfilesScreen(Screen):
         self.suite_name = suite_name
         self._active_panel = "in"
         self._status_bar: Static | None = None
-        self._in_panel: Container | None = None
-        self._available_panel: Container | None = None
+        self._in_panel: InSuitePanel | None = None
+        self._available_panel: AvailablePanel | None = None
 
     def compose(self):
         with Vertical(id="manage-layout"):
@@ -471,11 +495,7 @@ class ManageProfilesScreen(Screen):
                 yield self._available_panel
             with Container(id="manage-actions") as actions:
                 actions.border_title = "[3] Actions"
-                yield Static(
-                    "[bold green]a[/bold green]: Add  [bold red]d[/bold red]: Remove  "
-                    "[bold cyan][[/bold cyan]/[bold cyan]][/bold cyan]: Reorder  "
-                    "[bold cyan]Tab[/bold cyan]: Switch panel  [bold dim]Esc[/bold dim]: Back"
-                )
+                yield Static(self.ACTIONS_TEXT)
         self._status_bar = Static("", id="status-bar")
         yield self._status_bar
 
@@ -495,8 +515,10 @@ class ManageProfilesScreen(Screen):
     def _refresh(self) -> None:
         if self._in_panel:
             self._in_panel.remove()
+            self._in_panel = None
         if self._available_panel:
             self._available_panel.remove()
+            self._available_panel = None
         row = self.query_one("#manage-row", Horizontal)
         self._in_panel = self._build_in_panel()
         self._available_panel = self._build_available_panel()
@@ -506,24 +528,33 @@ class ManageProfilesScreen(Screen):
         self._focus_active_list()
 
     def _sync_active_panel_classes(self) -> None:
-        for panel_id, active_name in (("#in-suite-panel", "in"), ("#available-panel", "available")):
-            panel = self.query_one(panel_id, Container)
+        panels: list[tuple[Container, str]] = []
+        if self._in_panel is not None:
+            panels.append((self._in_panel, "in"))
+        if self._available_panel is not None:
+            panels.append((self._available_panel, "available"))
+        for panel, active_name in panels:
             panel.remove_class("manage-panel-active")
             if self._active_panel == active_name:
                 panel.add_class("manage-panel-active")
 
     def _focus_active_list(self) -> None:
         self._sync_active_panel_classes()
-        list_id = "#in-suite-listview" if self._active_panel == "in" else "#available-listview"
+        listview = self._current_listview()
+        if listview is None:
+            return
         try:
-            self.query_one(list_id, ListView).focus()
+            listview.focus()
         except Exception:
             pass
 
-    def _selected_from(self, list_id: str) -> str | None:
-        try:
-            listview = self.query_one(list_id, ListView)
-        except Exception:
+    def _current_listview(self) -> ListView | None:
+        if self._active_panel == "in":
+            return self._in_panel.listview if self._in_panel else None
+        return self._available_panel.listview if self._available_panel else None
+
+    def _selected_from(self, listview: ListView | None) -> str | None:
+        if listview is None:
             return None
         item = listview.highlighted_child
         if isinstance(item, ManageProfileItem):
@@ -539,7 +570,7 @@ class ManageProfilesScreen(Screen):
         self._focus_active_list()
 
     def action_add_profile(self) -> None:
-        profile_name = self._selected_from("#available-listview")
+        profile_name = self._selected_from(self._available_panel.listview if self._available_panel else None)
         if not profile_name:
             self._set_status("No available profile selected.")
             return
@@ -552,7 +583,7 @@ class ManageProfilesScreen(Screen):
             self._set_status(str(err))
 
     def action_remove_profile(self) -> None:
-        profile_name = self._selected_from("#in-suite-listview")
+        profile_name = self._selected_from(self._in_panel.listview if self._in_panel else None)
         if not profile_name:
             self._set_status("No suite profile selected.")
             return
@@ -570,7 +601,7 @@ class ManageProfilesScreen(Screen):
         self._move_selected(1)
 
     def _move_selected(self, delta: int) -> None:
-        profile_name = self._selected_from("#in-suite-listview")
+        profile_name = self._selected_from(self._in_panel.listview if self._in_panel else None)
         if not profile_name:
             self._set_status("No suite profile selected.")
             return
@@ -591,6 +622,44 @@ class ManageProfilesScreen(Screen):
         self._set_status(f"Moved '{profile_name}' to position {target + 1}.")
         self._refresh()
 
+    def action_force_quit(self) -> None:
+        """Immediately exit the app on Ctrl+C."""
+        self.app.exit()
+
+    def _focus_widget(self, selector: str, widget_type: type) -> bool:
+        try:
+            self.query_one(selector, widget_type).focus()
+            return True
+        except Exception:
+            return False
+
+    def action_focus_section_1(self) -> None:
+        self._active_panel = "in"
+        self._sync_active_panel_classes()
+        listview = self._in_panel.listview if self._in_panel else None
+        if listview is None:
+            self._set_status("In-suite list is not focusable right now.")
+            return
+        try:
+            listview.focus()
+        except Exception:
+            self._set_status("In-suite list is not focusable right now.")
+
+    def action_focus_section_2(self) -> None:
+        self._active_panel = "available"
+        self._sync_active_panel_classes()
+        listview = self._available_panel.listview if self._available_panel else None
+        if listview is None:
+            self._set_status("Available list is not focusable right now.")
+            return
+        try:
+            listview.focus()
+        except Exception:
+            self._set_status("Available list is not focusable right now.")
+
+    def action_focus_section_3(self) -> None:
+        self._set_status("Actions section is not focusable.")
+
     def action_back(self) -> None:
         self.app.pop_screen()
 
@@ -600,6 +669,8 @@ class SuitesScreen(Screen):
 
     BINDINGS = [
         Binding("escape", "back", "Back", show=False),
+        Binding("q", "back", "Back", show=False),
+        Binding("ctrl+c", "force_quit", "Quit", show=False),
         Binding("a", "add_suite", "Add", show=False),
         Binding("e", "edit_suite", "Edit", show=False),
         Binding("d", "delete_suite", "Delete", show=False),
@@ -647,21 +718,37 @@ class SuitesScreen(Screen):
                 self._suite_list = SuiteList(self._suites)
                 yield self._suite_list
                 self._detail_panel = SuiteDetail(self.config_manager)
+                self._detail_panel.id = "suite-detail-panel"
                 yield self._detail_panel
-            yield SuiteActionBar()
+            action_bar = SuiteActionBar()
+            action_bar.id = "suite-actions-panel"
+            yield action_bar
         self._status_bar = Static("", id="status-bar")
         yield self._status_bar
 
     def on_mount(self) -> None:
         if self._suites:
             self._show_suite(0)
-            try:
-                self.query_one("#suite-listview", ListView).focus()
-            except Exception:
-                pass
+        # Ensure focus is set after first render; avoids requiring a mouse click
+        # before keybindings become responsive on some terminals/platforms.
+        self.call_after_refresh(self._ensure_initial_focus)
 
     def on_screen_resume(self) -> None:
         self._refresh_list()
+
+    def _ensure_initial_focus(self) -> None:
+        if self._focus_widget("#suite-listview", ListView):
+            return
+        self._focus_suite_panel()
+
+    def _focus_suite_panel(self) -> bool:
+        if self._suite_list is None:
+            return False
+        try:
+            self._suite_list.focus()
+            return True
+        except Exception:
+            return False
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         if event.item is not None and isinstance(event.item, SuiteListItem):
@@ -698,12 +785,9 @@ class SuitesScreen(Screen):
         self._suite_list = new_list
         if self._suites:
             self._show_suite(0)
-            try:
-                self.query_one("#suite-listview", ListView).focus()
-            except Exception:
-                pass
         elif self._detail_panel:
             self._detail_panel.update_detail(None)
+        self.call_after_refresh(self._ensure_initial_focus)
 
     def action_add_suite(self) -> None:
         self.app.push_screen(SuiteFormModal(), callback=self._on_add_suite)
@@ -774,6 +858,17 @@ class SuitesScreen(Screen):
             self._set_status("No suite selected.")
             return
         self.app.push_screen(ManageProfilesScreen(self.config_manager, suite_name))
+
+    def action_force_quit(self) -> None:
+        """Immediately exit the app on Ctrl+C."""
+        self.app.exit()
+
+    def _focus_widget(self, selector: str, widget_type: type) -> bool:
+        try:
+            self.query_one(selector, widget_type).focus()
+            return True
+        except Exception:
+            return False
 
     def action_back(self) -> None:
         self.app.pop_screen()
