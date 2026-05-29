@@ -4,6 +4,7 @@ Mapping mode is enabled with `--mapping <preset-name>`.
 
 - If no mapping is set (CLI or profile), normal workflow is used: all files are matched by relative path.
 - If mapping is set, files are read from mapped source categories and copied into mapped target folders.
+- If `target_protect_globs` is set, matching target paths are fully ignored during mapped sync.
 
 ## Mapping presets location
 
@@ -23,7 +24,7 @@ You can also override the mapping file path by setting the `MCRU_MAPPING_FILE` e
 
 ### Source categories
 
-- `common`: `common/src/generated/data/*/recipes`
+- `common`: `common/src/generated/resources/data/*/recipes`
 - `fabric`: `fabric/src/main/resources/data/*/recipes`
 - `forge_like.candidates`:
     - `forge/src/main/resources/data/*/recipes`
@@ -46,7 +47,7 @@ Rule: if both forge and neoforge candidates resolve at the same time, sync fails
         "mc-arch": {
             "description": "Map multi-platform Minecraft recipe sources into core/fabric/forge target folders.",
             "source_roots": {
-                "common": ["common/src/generated/data/*/recipes"],
+                "common": ["common/src/generated/resources/data/*/recipes"],
                 "fabric": ["fabric/src/main/resources/data/*/recipes"],
                 "forge_like": {
                     "candidates": [
@@ -66,6 +67,7 @@ Rule: if both forge and neoforge candidates resolve at the same time, sync fails
                 "forge_like": "forge_like"
             },
             "omit_globs": [],
+            "target_protect_globs": [],
             "rules": {
                 "forge_like_conflict": "error_if_multiple",
                 "delete_mode": "global_target"
@@ -84,3 +86,15 @@ Examples:
 - `"**/minecraft/**"`
 - `"temp"`
 - `"*_backup"`
+
+## Target protect globs
+
+Use `target_protect_globs` to fully ignore target paths during mapped sync.
+
+Matching target files are not deleted, compared, or overwritten. This is useful when two mapping profiles share the same target folder but own different subfolders.
+
+Examples:
+
+- `"fabric"`
+- `"recipes/fabric/**"`
+- `"**/legacy/**"`

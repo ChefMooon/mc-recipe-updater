@@ -30,6 +30,7 @@
       "omit_globs": [
         "**/botanypots/**"
       ],
+      "target_protect_globs": [],
       "rules": {
         "forge_like_conflict": "error_if_multiple",
         "delete_mode": "global_target"
@@ -66,6 +67,7 @@
         "*_backup",
         "temp"
       ],
+      "target_protect_globs": [],
       "rules": {
         "forge_like_conflict": "error_if_multiple",
         "delete_mode": "global_target"

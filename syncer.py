@@ -203,6 +203,7 @@ class MCRU:
         """Run sync behavior based on source->target mapping categories."""
         self._progress(0, 0, "Building mapping")
         source_to_target = self._build_source_target_map()
+        target_protect_globs = self.mapping.get("target_protect_globs", [])
         self._check_cancel()
         self._progress(0, 0, "Scanning target")
         target_files = self._scan(self.target)
@@ -231,7 +232,11 @@ class MCRU:
         for index, rel_path in enumerate(target_files, 1):
             self._check_cancel()
             self._progress(index, total_target, "Finding removals")
-            if rel_path not in source_to_target and rel_path not in self.TARGET_PROTECTED_FILES:
+            if (
+                rel_path not in source_to_target
+                and rel_path not in self.TARGET_PROTECTED_FILES
+                and not self._matches_globs(Path(rel_path), target_protect_globs)
+            ):
                 to_remove.append(rel_path)
 
         applied_add = []
@@ -316,6 +321,7 @@ class MCRU:
         target_roots = self.mapping.get("target_roots", {})
         category_map = self.mapping.get("category_map", {})
         omit_globs = self.mapping.get("omit_globs", [])
+        target_protect_globs = self.mapping.get("target_protect_globs", [])
 
         source_to_target = {}
 
@@ -340,6 +346,9 @@ class MCRU:
 
                     relative_inside_category = source_file.relative_to(source_dir)
                     target_rel = (Path(target_root) / relative_inside_category).as_posix()
+                    if self._matches_globs(Path(target_rel), target_protect_globs):
+                        continue
+
                     source_rel = source_rel_to_root.as_posix()
 
                     existing = source_to_target.get(target_rel)
@@ -404,13 +413,16 @@ class MCRU:
         return result
 
     def _is_omitted(self, source_rel_path: Path, patterns: list[str]) -> bool:
+        return self._matches_globs(source_rel_path, patterns)
+
+    def _matches_globs(self, rel_path: Path, patterns: list[str]) -> bool:
         if not patterns:
             return False
 
-        source_rel = source_rel_path.as_posix()
-        parts = source_rel_path.parts
+        rel = rel_path.as_posix()
+        parts = rel_path.parts
         for pattern in patterns:
-            if fnmatch.fnmatch(source_rel, pattern):
+            if fnmatch.fnmatch(rel, pattern):
                 return True
             if any(fnmatch.fnmatch(part, pattern) for part in parts):
                 return True

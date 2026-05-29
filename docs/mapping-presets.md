@@ -51,6 +51,7 @@ Top-level JSON format:
       "target_roots": {},
       "category_map": {},
       "omit_globs": [],
+      "target_protect_globs": [],
       "rules": {}
     }
   }
@@ -141,6 +142,27 @@ Important:
 - `omit_globs` filters source-side inclusion
 - It does not protect existing target files from deletion
 
+### `target_protect_globs`
+Excludes target files from mapped sync.
+
+Patterns are checked the same way as `omit_globs`:
+- full target-relative path (POSIX style)
+- each individual path segment
+
+Examples:
+- `"fabric"`
+- `"recipes/fabric/**"`
+- `"**/legacy/**"`
+
+Protected target paths are fully ignored:
+- They are not deleted
+- They are not compared
+- They are not overwritten, even if a source file maps to the same target path
+
+Important:
+- This option applies only when a mapping preset is active
+- It is optional; omitted presets behave as if it were an empty list
+
 ### `rules`
 Rule object exists for behavior flags.
 
@@ -197,6 +219,9 @@ Example preset:
         "temp",
         "*_backup"
       ],
+      "target_protect_globs": [
+        "recipes/neoforge/**"
+      ],
       "rules": {
         "forge_like_conflict": "error_if_multiple",
         "delete_mode": "global_target"
@@ -252,25 +277,53 @@ With mapping enabled, snapshot source/target scope is limited to mapped roots.
 
 ## Can two different profiles write to one shared target safely?
 
-Short answer: not safely with current sync semantics if they run independently against the same target root.
+Yes, when each mapping preset protects the other profile's target subtree with `target_protect_globs`.
 
-Why:
-- Mapping mode still computes removals by scanning the entire target tree
-- Any target file not produced by the current run's mapped source set is considered removable
-- That includes files generated earlier by another profile/project
+Example shared target layout:
 
-So profile A can delete profile B output, even if each writes different subfolders.
+```text
+target-pack/
+  fabric/
+  neoforge/
+```
 
-### Recommended approaches
+Fabric profile preset:
 
-1. Use separate target roots per profile, then merge/publish downstream.
-2. If both platforms are in one source tree, use one profile/preset that maps both into one target.
-3. If you need both `forge` and `neoforge` from one source tree, define separate source categories (for example `forge` and `neoforge`) rather than `forge_like` candidates.
+```json
+"target_roots": {
+  "fabric": "fabric"
+},
+"target_protect_globs": [
+  "neoforge"
+]
+```
+
+NeoForge profile preset:
+
+```json
+"target_roots": {
+  "neoforge": "neoforge"
+},
+"target_protect_globs": [
+  "fabric"
+]
+```
+
+With this setup, each profile can update its own mapped output and fully ignore the other profile's folder.
+
+Important:
+- This requires mapping mode
+- Protection applies to files already in the target as well as source files that would map into the protected target path
+- Run `--dry-run` first when introducing a shared target
+
+If both platforms are in one source tree, a single profile/preset that maps both outputs remains simpler.
 
 ---
 
 ## Can I omit folders that are already correct?
 
-Yes, you can omit source folders from participation using `omit_globs`.
+Yes.
 
-No, there is currently no target-side omit/protect setting for general folders during mapped removals (other than built-in protection for root `CHANGELOG.md`).
+Use:
+- `omit_globs` to skip source files before mapping
+- `target_protect_globs` to fully ignore existing target files/folders during mapped sync
