@@ -17,6 +17,7 @@ Full flag and option reference for every `mcru` command.
 ## Feature Guides
 
 - **[Target Changelog](target-changelog.md)** — Automatically maintain a `CHANGELOG.md` inside the target folder
+- **[Mapping Presets](mapping-presets.md)** — Create custom source-to-target routing presets (`--mapping`)
 
 ## Common Flags
 
