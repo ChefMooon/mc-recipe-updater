@@ -281,6 +281,40 @@ def test_prune_deletes_only_the_confirmed_candidate_ids(backup_manager, temp_tar
 class TestBackupCLIIntegration:
     """Tests for backup CLI command integration"""
 
+    def _install_path_preflight_config(self, monkeypatch, source, target, suite=None):
+        backup_calls = []
+
+        class _ConfigManager:
+            def get_profile(self, name):
+                if name == "profile":
+                    return {
+                        "name": name,
+                        "source": str(source),
+                        "target": str(target),
+                        "parsers": [],
+                    }
+                return None
+
+            def get_suite(self, name):
+                return suite if name == "suite" else None
+
+            def get_mapping_preset(self, _name):
+                raise AssertionError("mapping lookup was not expected")
+
+        class _GlobalConfig:
+            def get(self, key, default=None):
+                return {"backup.enabled": True, "backup.max_backups": 0}.get(key, default)
+
+        class _BackupManager:
+            def create_backup(self, *_args, **_kwargs):
+                backup_calls.append("created")
+                return "backup-id"
+
+        monkeypatch.setattr(cli_module, "ConfigManager", _ConfigManager)
+        monkeypatch.setattr(cli_module, "GlobalConfig", _GlobalConfig)
+        monkeypatch.setattr(cli_module, "BackupManager", _BackupManager)
+        return backup_calls
+
     def _install_failed_sync(self, monkeypatch, backup_manager, source, target, rollback_complete):
         outcome_calls = []
 
@@ -409,6 +443,61 @@ class TestBackupCLIIntegration:
 
         assert result.exit_code == 1
         assert outcomes == ["failed"]
+
+    @pytest.mark.parametrize("invalid_roots", ["source_file", "target_file", "overlap"])
+    def test_profile_path_preflight_fails_before_backup(
+        self, monkeypatch, tmp_path, invalid_roots
+    ):
+        source, target = self._make_run_dirs(tmp_path)
+        if invalid_roots == "source_file":
+            source.rmdir()
+            source.write_text("not a directory")
+        elif invalid_roots == "target_file":
+            (target / "before.txt").unlink()
+            target.rmdir()
+            target.write_text("not a directory")
+        else:
+            source = target / "nested-source"
+            source.mkdir()
+        backup_calls = self._install_path_preflight_config(
+            monkeypatch, source, target
+        )
+
+        result = CliRunner().invoke(cli_module.cli, ["run", "profile"])
+
+        assert result.exit_code == 1
+        assert "Invalid sync paths" in result.output
+        assert backup_calls == []
+        if target.is_dir():
+            assert (target / "before.txt").read_text() == "before"
+
+    def test_suite_skips_unsafe_profile_with_reason_before_backup(self, monkeypatch, tmp_path):
+        source, target = self._make_run_dirs(tmp_path)
+        source = target / "nested-source"
+        source.mkdir()
+        backup_calls = self._install_path_preflight_config(
+            monkeypatch, source, target, suite={"name": "suite", "profiles": ["profile"]}
+        )
+
+        result = CliRunner().invoke(cli_module.cli, ["run", "suite", "--no-report"])
+
+        assert "Profile 'profile'" in result.output
+        assert "overlap" in result.output
+        assert "skipping" in result.output
+        assert backup_calls == []
+        assert (target / "before.txt").read_text() == "before"
+
+    def test_quick_path_preflight_returns_nonzero_for_non_directory(self, tmp_path):
+        source = tmp_path / "source"
+        source.write_text("not a directory")
+        target = tmp_path / "target"
+        target.mkdir()
+
+        result = CliRunner().invoke(cli_module.cli, ["quick", str(source), str(target)])
+
+        assert result.exit_code == 1
+        assert "Invalid sync paths" in result.output
+        assert str(source) in result.output
 
 
 if __name__ == "__main__":

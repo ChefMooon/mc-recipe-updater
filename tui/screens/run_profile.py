@@ -11,7 +11,7 @@ from textual.binding import Binding
 from config import ConfigManager, GlobalConfig
 from backup import BackupManager
 from reporter import Reporter, SuiteReporter, TargetChangelogWriter
-from syncer import MCRU, SyncCancelled
+from syncer import MCRU, SyncCancelled, _validate_sync_roots
 from tui.utils import ThreadedSyncer
 
 
@@ -471,10 +471,15 @@ class RunProfileScreen(Screen):
             config["target"] = options["target"]
         source = Path(config["source"])
         target = Path(config["target"])
-        if not source.is_dir():
+        if not source.exists():
             raise FileNotFoundError(f"Source folder does not exist: {source}")
-        if not target.is_dir():
+        if not source.is_dir():
+            raise NotADirectoryError(f"Source path is not a directory: {source}")
+        if not target.exists():
             raise FileNotFoundError(f"Target folder does not exist: {target}")
+        if not target.is_dir():
+            raise NotADirectoryError(f"Target path is not a directory: {target}")
+        _validate_sync_roots(source, target)
         active_mapping = options.get("mapping") or config.get("mapping_preset")
         if active_mapping:
             config["mapping"] = self.config_manager.get_mapping_preset(active_mapping)
@@ -705,13 +710,28 @@ class RunProfileScreen(Screen):
             self._set_status("Suite has no profiles.")
             return
         options = self._option_values()
+        prepared_configs = {}
+        skipped = []
+        for profile_name in suite.get("profiles", []):
+            try:
+                prepared_configs[profile_name] = self._prepare_profile_config(
+                    profile_name, options
+                )
+            except (OSError, ValueError, KeyError, TypeError) as err:
+                skipped.append((profile_name, str(err)))
+        if not prepared_configs:
+            details = "; ".join(f"{name}: {reason}" for name, reason in skipped)
+            self._set_status(f"No suite profiles can run. {details}")
+            return
+        suite = dict(suite)
+        suite["profiles"] = list(prepared_configs)
         run_id = self._next_run_id()
         cancel_event = threading.Event()
         self._suite_cancel_event = cancel_event
         self._switch_to_running(suite_name, "suite", options["dry_run"])
         self._suite_thread = threading.Thread(
             target=self._run_suite_worker,
-            args=(run_id, suite_name, suite, options, cancel_event),
+            args=(run_id, suite_name, suite, options, cancel_event, prepared_configs, skipped),
             daemon=True,
         )
         self._suite_thread.start()
@@ -723,21 +743,38 @@ class RunProfileScreen(Screen):
         suite: dict,
         options: dict,
         cancel_event: threading.Event,
+        prepared_configs: dict[str, dict] | None = None,
+        preflight_skipped: list[tuple[str, str]] | None = None,
     ) -> None:
         runs = []
-        skipped = []
+        skipped = list(preflight_skipped or [])
         warnings = []
         report_path = None
         cancelled = False
         error = None
+        prepared_configs = prepared_configs or {}
         for profile_name in suite.get("profiles", []):
             if cancel_event.is_set():
                 cancelled = True
                 error = SyncCancelled()
                 break
             try:
-                config = self._prepare_profile_config(profile_name, options)
+                config = prepared_configs.get(profile_name)
+                if config is None:
+                    config = self._prepare_profile_config(profile_name, options)
             except Exception as err:
+                skipped.append((profile_name, str(err)))
+                continue
+            try:
+                mcru = MCRU(
+                    config,
+                    dry_run=options["dry_run"],
+                    progress_callback=lambda current, total, op, name=profile_name: self._dispatch_to_app(
+                        self._on_progress, run_id, current, total, op, name
+                    ),
+                    cancel_event=cancel_event,
+                )
+            except (OSError, ValueError) as err:
                 skipped.append((profile_name, str(err)))
                 continue
             backup_id = None
@@ -748,14 +785,6 @@ class RunProfileScreen(Screen):
                     skipped.append((profile_name, f"Backup failed: {err}"))
                     continue
             try:
-                mcru = MCRU(
-                    config,
-                    dry_run=options["dry_run"],
-                    progress_callback=lambda current, total, op, name=profile_name: self._dispatch_to_app(
-                        self._on_progress, run_id, current, total, op, name
-                    ),
-                    cancel_event=cancel_event,
-                )
                 results = mcru.run()
             except SyncCancelled as err:
                 results = err.results

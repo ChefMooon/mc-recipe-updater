@@ -1047,12 +1047,7 @@ def run(profile, dry_run, no_report, backup_override, source, target, mapping, t
             if target:
                 pcfg["target"] = target
 
-            # Validate source and target folders exist
-            source_path = Path(pcfg["source"])
             target_path = Path(pcfg["target"])
-            if not source_path.exists():
-                click.echo(f"  ❌  {pname}: Source folder does not exist: {pcfg['source']} — skipping.")
-                continue
             if not target_path.exists():
                 click.echo(f"  ❌  {pname}: Target folder does not exist: {pcfg['target']} — skipping.")
                 continue
@@ -1072,6 +1067,12 @@ def run(profile, dry_run, no_report, backup_override, source, target, mapping, t
             if pcfg.get("mapping_preset"):
                 click.echo(f"     Mapping: {pcfg['mapping_preset']}")
 
+            try:
+                mcru = MCRU(pcfg, dry_run=dry_run)
+            except (OSError, ValueError) as err:
+                click.echo(f"  ❌  Profile '{pname}' has invalid sync paths: {err} — skipping.")
+                continue
+
             # Create backup if enabled
             backup_id = None
             if backup_enabled:
@@ -1083,10 +1084,9 @@ def run(profile, dry_run, no_report, backup_override, source, target, mapping, t
                         click.echo(f"  ❌  Aborted.")
                         continue
 
-            mcru = MCRU(pcfg, dry_run=dry_run)
             try:
                 results = mcru.run()
-            except ValueError as err:
+            except (OSError, ValueError) as err:
                 click.echo(f"  ❌  {pname}: {err} — skipping.")
                 if backup_id:
                     bm.finalize_backup(backup_id, "failed")
@@ -1155,15 +1155,16 @@ def run(profile, dry_run, no_report, backup_override, source, target, mapping, t
     else:
         click.echo("    Mode   : LIVE\n")
 
-    # Validate source and target folders exist
-    source_path = Path(config["source"])
     target_path = Path(config["target"])
-    if not source_path.exists():
-        click.echo(f"❌  Source folder does not exist: {config['source']}")
-        return
     if not target_path.exists():
         click.echo(f"❌  Target folder does not exist: {config['target']}")
-        return
+        raise click.exceptions.Exit(1)
+
+    try:
+        mcru = MCRU(config, dry_run=dry_run)
+    except (OSError, ValueError) as err:
+        click.echo(f"❌  Invalid sync paths: {err}")
+        raise click.exceptions.Exit(1)
 
     # Create backup if enabled
     backup_id = None
@@ -1176,14 +1177,13 @@ def run(profile, dry_run, no_report, backup_override, source, target, mapping, t
                 click.echo("Aborted.")
                 return
 
-    mcru = MCRU(config, dry_run=dry_run)
     try:
         results = mcru.run()
-    except ValueError as err:
-        click.echo(f"❌  {err}")
+    except (OSError, ValueError) as err:
+        click.echo(f"❌  Sync failed: {err}")
         if backup_id:
             bm.finalize_backup(backup_id, "failed")
-        return
+        raise click.exceptions.Exit(1)
 
     outcome = _result_outcome(results)
     if backup_id:
@@ -1374,12 +1374,16 @@ def quick(source, target, dry_run, parser, mapping):
             click.echo(f"❌  {err}")
             return
 
-    mcru = MCRU(config, dry_run=dry_run)
+    try:
+        mcru = MCRU(config, dry_run=dry_run)
+    except (OSError, ValueError) as err:
+        click.echo(f"❌  Invalid sync paths: {err}")
+        raise click.exceptions.Exit(1)
     try:
         results = mcru.run()
-    except ValueError as err:
-        click.echo(f"❌  {err}")
-        return
+    except (OSError, ValueError) as err:
+        click.echo(f"❌  Sync failed: {err}")
+        raise click.exceptions.Exit(1)
     outcome = _result_outcome(results)
     reporter = Reporter("quick-run", config, results, dry_run=dry_run, outcome=outcome)
     reporter.print_summary()

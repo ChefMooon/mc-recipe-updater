@@ -45,6 +45,27 @@ def _copy_results(results: dict) -> dict:
     return {key: list(results.get(key, [])) for key in _empty_results()}
 
 
+def _validate_sync_roots(source: Path, target: Path) -> tuple[Path, Path]:
+    """Resolve sync roots and reject inputs that cannot be mirrored safely."""
+    source = source.resolve()
+    target = target.resolve()
+
+    if not source.exists():
+        raise FileNotFoundError(f"Source folder not found: {source}")
+    if not source.is_dir():
+        raise NotADirectoryError(f"Source path is not a directory: {source}")
+    if target.exists() and not target.is_dir():
+        raise NotADirectoryError(f"Target path is not a directory: {target}")
+
+    if source == target or source in target.parents or target in source.parents:
+        raise ValueError(
+            f"Source and target directories must not be the same or overlap: "
+            f"{source} and {target}"
+        )
+
+    return source, target
+
+
 class _SyncTransaction:
     """Journal filesystem changes so a failed run can reverse them."""
 
@@ -223,17 +244,16 @@ class MCRU:
         progress_callback: Callable[[int, int, str], None] | None = None,
         cancel_event: Event | None = None,
     ):
-        self.source = Path(config["source"])
-        self.target = Path(config["target"])
+        self.source, self.target = _validate_sync_roots(
+            Path(config["source"]),
+            Path(config["target"]),
+        )
         self.parsers = config.get("parsers", [])
         self.mapping = config.get("mapping")
         self.dry_run = dry_run
         self.progress_callback = progress_callback or (lambda current, total, operation: None)
         self.cancel_event = cancel_event
         self._partial_results = _empty_results()
-
-        if not self.source.exists():
-            raise FileNotFoundError(f"Source folder not found: {self.source}")
 
     def run(self) -> dict:
         """Run the full compare + sync pipeline. Returns a results dict."""

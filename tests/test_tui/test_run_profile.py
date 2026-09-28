@@ -449,13 +449,153 @@ def test_profile_preflight_rejects_non_directories_without_mutating_target(tmp_p
     paths[bad_role] = bad_path
     screen = run_profile.RunProfileScreen(_ProfileConfigManager(source, target))
 
-    with pytest.raises(FileNotFoundError):
+    expected_error = NotADirectoryError if bad_path_kind == "file" else FileNotFoundError
+    with pytest.raises(expected_error):
         screen._prepare_profile_config(
             "selected",
             {"source": str(paths["source"]), "target": str(paths["target"])},
         )
 
     assert sentinel.read_text() == "keep"
+
+
+def test_profile_preflight_rejects_overlapping_roots(tmp_path):
+    source = tmp_path / "source"
+    target = source / "target"
+    target.mkdir(parents=True)
+    sentinel = target / "keep.txt"
+    sentinel.write_text("keep")
+    screen = run_profile.RunProfileScreen(_ProfileConfigManager(source, target))
+
+    with pytest.raises(ValueError, match="must not be the same or overlap"):
+        screen._prepare_profile_config(
+            "selected",
+            {"source": str(source), "target": str(target)},
+        )
+
+    assert sentinel.read_text() == "keep"
+
+
+def test_profile_start_rejects_unsafe_roots_before_backup_or_worker(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    target = source / "target"
+    target.mkdir(parents=True)
+    screen = run_profile.RunProfileScreen(_ProfileConfigManager(source, target))
+    status = []
+    backup_calls = []
+    worker_calls = []
+
+    class _BackupManager:
+        def create_backup(self, *_args, **_kwargs):
+            backup_calls.append(True)
+
+    class _ThreadedSyncer:
+        def __init__(self, *_args, **_kwargs):
+            worker_calls.append("created")
+
+        def start(self):
+            worker_calls.append("started")
+
+    screen.backup_manager = _BackupManager()
+    monkeypatch.setattr(screen, "_option_values", lambda: {
+        "dry_run": False,
+        "backup": True,
+        "changelog": False,
+        "source": None,
+        "target": None,
+        "mapping": None,
+    })
+    monkeypatch.setattr(screen, "_set_status", status.append)
+    monkeypatch.setattr(run_profile, "ThreadedSyncer", _ThreadedSyncer)
+
+    screen._start_profile_run("selected")
+
+    assert status and "overlap" in status[0]
+    assert backup_calls == []
+    assert worker_calls == []
+    assert screen._phase == "selection"
+
+
+def test_suite_start_reports_invalid_roots_before_starting_worker(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    target = source / "target"
+    target.mkdir(parents=True)
+
+    class _SuiteConfigManager(_ProfileConfigManager):
+        def list_suites(self):
+            return [{"name": "suite"}]
+
+        def get_suite(self, name):
+            return {"name": name, "profiles": ["selected"]} if name == "suite" else None
+
+    screen = run_profile.RunProfileScreen(_SuiteConfigManager(source, target))
+    status = []
+    worker_calls = []
+
+    class _Thread:
+        def __init__(self, *_args, **_kwargs):
+            worker_calls.append("created")
+
+        def start(self):
+            worker_calls.append("started")
+
+    monkeypatch.setattr(screen, "_option_values", lambda: {
+        "dry_run": False,
+        "backup": True,
+        "changelog": False,
+        "source": None,
+        "target": None,
+        "mapping": None,
+    })
+    monkeypatch.setattr(screen, "_set_status", status.append)
+    monkeypatch.setattr(screen, "_switch_to_running", lambda *_args: None)
+    monkeypatch.setattr(run_profile.threading, "Thread", _Thread)
+
+    screen._start_suite_run("suite")
+
+    assert status and "selected" in status[0] and "overlap" in status[0]
+    assert worker_calls == []
+    assert screen._suite_thread is None
+
+
+def test_suite_start_prepares_valid_profile_before_starting_worker(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.mkdir()
+    target.mkdir()
+
+    class _SuiteConfigManager(_ProfileConfigManager):
+        def get_suite(self, name):
+            return {"name": name, "profiles": ["selected"]} if name == "suite" else None
+
+    screen = run_profile.RunProfileScreen(_SuiteConfigManager(source, target))
+    thread_args = []
+
+    class _Thread:
+        def __init__(self, *, target, args, daemon):
+            thread_args.append((target, args, daemon))
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(screen, "_option_values", lambda: {
+        "dry_run": False,
+        "backup": False,
+        "changelog": False,
+        "source": None,
+        "target": None,
+        "mapping": None,
+    })
+    monkeypatch.setattr(screen, "_switch_to_running", lambda *_args: None)
+    monkeypatch.setattr(screen, "_next_run_id", lambda: 1)
+    monkeypatch.setattr(run_profile.threading, "Thread", _Thread)
+
+    screen._start_suite_run("suite")
+
+    assert len(thread_args) == 1
+    assert thread_args[0][1][2]["profiles"] == ["selected"]
+    assert thread_args[0][1][5]["selected"]["source"] == str(source)
+    assert thread_args[0][1][6] == []
 
 
 def test_profile_completion_reports_backup_finalize_and_rotation_warnings(tmp_path, monkeypatch):

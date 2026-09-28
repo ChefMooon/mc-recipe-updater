@@ -23,6 +23,12 @@ The tool supports two sync modes:
 | **Default** | Direct path-mirroring. `source/foo/bar.json` → `target/foo/bar.json`                                                                            |
 | **Mapping** | Category-aware routing. Source folders are categorised (e.g. `common`, `fabric`, `forge`) and files are placed into mapped target root folders. |
 
+### Sync Root Validation
+
+The shared sync engine resolves the source and target paths before syncing. The source must be an existing directory; if the target already exists, it must also be a directory. Resolved roots are rejected if they are identical or overlap because one is inside the other. The engine itself permits a target that does not yet exist.
+
+Entry points retain their own missing-target policies: `mcru run` requires an existing target, and a suite skips profiles whose target is missing; `mcru quick` may create a missing target. The TUI requires both source and target paths to exist as directories before starting a run.
+
 ---
 
 ## Module Overview
@@ -527,7 +533,9 @@ See [folder-mapping.md](folder-mapping.md) for the full mapping documentation.
 
 | Scenario                            | Behaviour                                                      |
 | ----------------------------------- | -------------------------------------------------------------- |
-| Source directory not found          | `FileNotFoundError` raised before any sync begins              |
+| Source missing or not a directory   | Validation error raised before any sync begins                 |
+| Existing target is not a directory  | Validation error raised before any sync begins                 |
+| Resolved roots are identical/overlap | `ValueError` raised before any sync begins                     |
 | Mapping preset not found            | Error printed, command exits cleanly                           |
 | Forge + neoforge both present       | Error if `forge_like_conflict: error_if_multiple`              |
 | Two source files map to same target | `ValueError` raised with both conflicting paths named          |

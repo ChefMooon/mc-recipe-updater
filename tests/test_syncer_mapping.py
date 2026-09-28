@@ -9,6 +9,65 @@ from syncer import MCRU, SyncCancelled
 from tui.utils import ThreadedSyncer
 
 
+@pytest.mark.parametrize(
+    ("invalid_roots", "expected_error", "error_message"),
+    [
+        ("source_file", NotADirectoryError, "Source path is not a directory"),
+        ("target_file", NotADirectoryError, "Target path is not a directory"),
+        ("overlap", ValueError, "must not be the same or overlap"),
+    ],
+)
+def test_mapping_sync_rejects_invalid_roots_before_mapping_or_mutation(
+    tmp_path, monkeypatch, invalid_roots, expected_error, error_message
+):
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+
+    if invalid_roots == "source_file":
+        source.write_text("source contents")
+        target.mkdir()
+        target_file = target / "keep.json"
+        target_file.write_text("target contents")
+        source_file = source
+    elif invalid_roots == "target_file":
+        source.mkdir()
+        source_file = source / "fabric.json"
+        source_file.write_text("source contents")
+        target.write_text("target contents")
+        target_file = target
+    else:
+        source = target / "source"
+        source.mkdir(parents=True)
+        source_file = source / "fabric.json"
+        source_file.write_text("source contents")
+        target_file = target / "keep.json"
+        target_file.write_text("target contents")
+
+    def fail_mapping_traversal(_syncer):
+        pytest.fail("mapping traversal must not run for invalid roots")
+
+    monkeypatch.setattr(MCRU, "_build_source_target_map", fail_mapping_traversal)
+
+    with pytest.raises(expected_error, match=error_message):
+        MCRU(
+            {
+                "source": str(source),
+                "target": str(target),
+                "parsers": [],
+                "mapping": {
+                    "source_roots": {"fabric": ["fabric"]},
+                    "target_roots": {"fabric": "fabric"},
+                    "category_map": {"fabric": "fabric"},
+                },
+            },
+            dry_run=False,
+        )
+
+    assert source_file.read_text() == "source contents"
+    assert target_file.read_text() == "target contents"
+    assert list(tmp_path.rglob(".mcru-transaction-*")) == []
+
+
 def test_mapping_target_protect_globs_skip_removals(tmp_path):
     source = tmp_path / "source"
     target = tmp_path / "target"

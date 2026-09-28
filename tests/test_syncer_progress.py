@@ -1,5 +1,6 @@
 """Tests for sync progress and cancellation hooks."""
 
+import os
 import threading
 from pathlib import Path
 
@@ -8,6 +9,10 @@ import pytest
 import syncer as syncer_module
 from syncer import MCRU, SyncCancelled
 from tui.utils import ThreadedSyncer
+
+
+def _assert_no_transaction_workspace(tmp_path):
+    assert list(tmp_path.rglob(".mcru-transaction-*")) == []
 
 
 def test_syncer_reports_progress(tmp_path):
@@ -29,6 +34,103 @@ def test_syncer_reports_progress(tmp_path):
     assert results["added"] == ["file.txt"]
     assert any(operation == "Comparing files" for _, _, operation in events)
     assert events[-1][2] == "Complete"
+
+
+def test_syncer_creates_a_missing_target_as_before(tmp_path):
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.mkdir()
+    (source / "file.txt").write_text("hello")
+
+    results = MCRU({"source": str(source), "target": str(target), "parsers": []}).run()
+
+    assert results["added"] == ["file.txt"]
+    assert (target / "file.txt").read_text() == "hello"
+    assert list(tmp_path.rglob(".mcru-transaction-*")) == []
+
+
+def test_syncer_rejects_source_file_without_mutating_target(tmp_path):
+    source = tmp_path / "source.txt"
+    target = tmp_path / "target"
+    source.write_text("source contents")
+    target.mkdir()
+    (target / "keep.txt").write_text("target contents")
+
+    with pytest.raises(NotADirectoryError, match="Source path is not a directory"):
+        MCRU({"source": str(source), "target": str(target), "parsers": []})
+
+    assert source.read_text() == "source contents"
+    assert (target / "keep.txt").read_text() == "target contents"
+    _assert_no_transaction_workspace(tmp_path)
+
+
+def test_syncer_rejects_identical_roots_without_mutating_files(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    keep_file = root / "keep.txt"
+    keep_file.write_text("contents")
+
+    with pytest.raises(ValueError, match="must not be the same or overlap"):
+        MCRU(
+            {
+                "source": str(root),
+                "target": str(root).swapcase() if os.name == "nt" else str(root),
+                "parsers": [],
+            }
+        )
+
+    assert keep_file.read_text() == "contents"
+    _assert_no_transaction_workspace(tmp_path)
+
+
+def test_syncer_rejects_source_nested_under_target_without_mutation(tmp_path):
+    target = tmp_path / "target"
+    source = target / "source"
+    source.mkdir(parents=True)
+    source_file = source / "source.txt"
+    source_file.write_text("source contents")
+    target_file = target / "target.txt"
+    target_file.write_text("target contents")
+
+    with pytest.raises(ValueError, match="must not be the same or overlap"):
+        MCRU({"source": str(source), "target": str(target), "parsers": []})
+
+    assert source_file.read_text() == "source contents"
+    assert target_file.read_text() == "target contents"
+    _assert_no_transaction_workspace(tmp_path)
+
+
+def test_syncer_rejects_target_nested_under_source_without_mutation(tmp_path):
+    source = tmp_path / "source"
+    target = source / "target"
+    target.mkdir(parents=True)
+    source_file = source / "source.txt"
+    source_file.write_text("source contents")
+    target_file = target / "target.txt"
+    target_file.write_text("target contents")
+
+    with pytest.raises(ValueError, match="must not be the same or overlap"):
+        MCRU({"source": str(source), "target": str(target), "parsers": []})
+
+    assert source_file.read_text() == "source contents"
+    assert target_file.read_text() == "target contents"
+    _assert_no_transaction_workspace(tmp_path)
+
+
+def test_syncer_rejects_existing_target_file_without_mutating_source(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    source_file = source / "source.txt"
+    source_file.write_text("source contents")
+    target = tmp_path / "target.txt"
+    target.write_text("target contents")
+
+    with pytest.raises(NotADirectoryError, match="Target path is not a directory"):
+        MCRU({"source": str(source), "target": str(target), "parsers": []})
+
+    assert source_file.read_text() == "source contents"
+    assert target.read_text() == "target contents"
+    _assert_no_transaction_workspace(tmp_path)
 
 
 def test_syncer_cancels_before_work(tmp_path):

@@ -59,6 +59,8 @@ Accepts a **profile name** or a **suite name** — profile lookup happens first,
 
 `--target-changelog` can also be set permanently per-profile with `profile add --target-changelog`; the CLI flag overrides the profile setting.
 
+For profile and suite runs, the source must be an existing directory and the target must already exist as a directory. The resolved source and target roots must not be identical or overlap (one inside the other). A suite skips profiles whose target does not exist.
+
 See [target-changelog.md](target-changelog.md) for a full guide including entry format, suite behaviour, and tips.
 
 ```bash
@@ -91,6 +93,8 @@ mcru quick ./my-mod ./target-pack --mapping mc-arch
 ```
 
 Quick runs do not save a report file.
+
+The source must be an existing directory. An existing target must be a directory, but `quick` can create a target that does not yet exist. The resolved source and target roots must not be identical or overlap (one inside the other).
 
 ---
 
