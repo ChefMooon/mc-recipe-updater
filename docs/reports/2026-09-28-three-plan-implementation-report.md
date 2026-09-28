@@ -97,12 +97,14 @@ Workstreams ran sequentially; no implementation phases overlapped.
 - The distribution plan added setuptools package-data configuration during its packaging-baseline
   phase so that the required regression test could pass; the change was already required by the
   plan's next phase.
-- The three plan directories were untracked in the initial worktree. Their contents were left
-  unchanged and excluded from implementation commits.
+- The three plan directories were untracked at implementation start and deliberately excluded
+  from the three implementation commits. After completion, each plan was updated with checked
+  tasks, phase statuses, handoff evidence, and final validation state; the completed plan records
+  are committed with this follow-up report update.
 - No build or egg-info outputs were committed. A generated package bytecode file was removed after validation.
 - The commits are local and have not been pushed.
 
 ## Final Status
 
-All three plans are complete, validated, and committed in the requested order. The orchestration
-report is recorded separately from the three plan commits.
+All three implementation plans are complete, validated, and committed in the requested order.
+Their final completion records are committed with this report update.
