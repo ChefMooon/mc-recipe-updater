@@ -19,13 +19,28 @@ Workstreams ran sequentially; no implementation phases overlapped.
    members and reasons, distinguish failures from skips, classify incomplete outcomes, and
    return nonzero status when not successful. `SuiteReporter` remains compatible with TUI
    callers. Suite and command documentation describe the behavior.
+   **Files:** [config.py](../../config.py), [cli.py](../../cli.py),
+   [reporter.py](../../reporter.py), [commands.md](../commands.md),
+   [suites.md](../suites.md), [test_profiles.py](../../tests/test_profiles.py),
+   [test_backup.py](../../tests/test_backup.py),
+   [test_run_profile.py](../../tests/test_tui/test_run_profile.py), and
+   [test_reports_screen.py](../../tests/test_tui/test_reports_screen.py).
 2. **Distribution and parser integrity — complete.** Moved the unchanged bundled presets into
    `mcru_resources`, declared the package data, and switched config, CLI, and TUI consumers to
    `importlib.resources`. CLI parser choices now come from the registry, and unknown persisted
    parser names fail before sync mutations. Updated the architecture guide.
+   **Files:** [the resource package](../../mcru_resources),
+   [setup.py](../../setup.py), [config.py](../../config.py), [cli.py](../../cli.py),
+   [registry.py](../../registry.py), [syncer.py](../../syncer.py),
+   [TUI config screen](../../tui/screens/config.py),
+   [test_packaging.py](../../tests/test_packaging.py),
+   [test_profiles.py](../../tests/test_profiles.py),
+   [test_config_screen.py](../../tests/test_tui/test_config_screen.py), and
+   [architecture.md](../architecture.md). The root preset file was moved into the resource package.
 3. **Documentation cleanup — complete.** Repaired the README onboarding and reset guidance,
    removed malformed and duplicate material, corrected the shipped TUI description, and fixed
    the pinned/unpinned backup rotation examples.
+   **Files:** [README.md](../../README.md) and [backups.md](../backups.md).
 
 ## Coordination
 
