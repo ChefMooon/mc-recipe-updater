@@ -45,6 +45,37 @@ SNAPSHOT_EXCLUDED_NAMES = {
     "dist",
 }
 
+_RESULT_MUTATION_KEYS = ("added", "updated", "removed", "dirs_added", "dirs_removed")
+
+
+def _result_outcome(results: dict) -> str:
+    rollback_complete = results.get("rollback_complete")
+    if rollback_complete is False:
+        return "partial"
+    if rollback_complete is True:
+        return "failed"
+    if results.get("errors"):
+        retained_changes = sum(len(results.get(key, [])) for key in _RESULT_MUTATION_KEYS)
+        return "partial" if retained_changes else "failed"
+    return "success"
+
+
+def _suite_outcome(runs: list[tuple[str, dict, dict]]) -> str:
+    results = [result for _, _, result in runs]
+    if any(result.get("rollback_complete") is False for result in results):
+        return "partial"
+    if any(
+        result.get("rollback_complete") is True or result.get("errors")
+        for result in results
+    ):
+        retained_changes = sum(
+            len(result.get(key, []))
+            for result in results
+            for key in _RESULT_MUTATION_KEYS
+        )
+        return "partial" if retained_changes else "failed"
+    return "success"
+
 
 def _is_snapshot_excluded_name(name: str) -> bool:
     lowered = name.lower()
@@ -1061,10 +1092,11 @@ def run(profile, dry_run, no_report, backup_override, source, target, mapping, t
                     bm.finalize_backup(backup_id, "failed")
                 continue
 
-            # Finalize backup and rotate
+            run_outcome = _result_outcome(results)
             if backup_id:
-                bm.finalize_backup(backup_id, "success")
-                bm.rotate_backups(max_backups)
+                bm.finalize_backup(backup_id, "success" if run_outcome == "success" else "failed")
+                if run_outcome == "success":
+                    bm.rotate_backups(max_backups)
 
             runs.append((pname, pcfg, results))
 
@@ -1076,7 +1108,8 @@ def run(profile, dry_run, no_report, backup_override, source, target, mapping, t
             click.echo("\n❌  No profiles ran successfully.")
             return
 
-        suite_reporter = SuiteReporter(profile, runs, dry_run=dry_run)
+        outcome = _suite_outcome(runs)
+        suite_reporter = SuiteReporter(profile, runs, dry_run=dry_run, outcome=outcome)
         suite_reporter.print_summary()
 
         if not no_report:
@@ -1089,6 +1122,8 @@ def run(profile, dry_run, no_report, backup_override, source, target, mapping, t
         ]
         if changelog_profiles and not dry_run:
             click.echo(f"\n📋  Changelog updated for: {', '.join(changelog_profiles)}")
+        if outcome != "success":
+            raise click.exceptions.Exit(1)
         return
 
     # ── Single profile run ─────────────────────────────────────────
@@ -1150,12 +1185,13 @@ def run(profile, dry_run, no_report, backup_override, source, target, mapping, t
             bm.finalize_backup(backup_id, "failed")
         return
 
-    # Finalize backup and rotate
+    outcome = _result_outcome(results)
     if backup_id:
-        bm.finalize_backup(backup_id, "success")
-        bm.rotate_backups(max_backups)
+        bm.finalize_backup(backup_id, "success" if outcome == "success" else "failed")
+        if outcome == "success":
+            bm.rotate_backups(max_backups)
 
-    reporter = Reporter(profile, config, results, dry_run=dry_run)
+    reporter = Reporter(profile, config, results, dry_run=dry_run, outcome=outcome)
     reporter.print_summary()
 
     if not no_report:
@@ -1167,6 +1203,8 @@ def run(profile, dry_run, no_report, backup_override, source, target, mapping, t
         if writer.write(results, config):
             changelog_path = Path(config["target"]) / TargetChangelogWriter.CHANGELOG_FILENAME
             click.echo(f"\n📋  Changelog updated: {changelog_path}")
+    if outcome != "success":
+        raise click.exceptions.Exit(1)
 
 
 # ──────────────────────────────────────────────
@@ -1342,8 +1380,11 @@ def quick(source, target, dry_run, parser, mapping):
     except ValueError as err:
         click.echo(f"❌  {err}")
         return
-    reporter = Reporter("quick-run", config, results, dry_run=dry_run)
+    outcome = _result_outcome(results)
+    reporter = Reporter("quick-run", config, results, dry_run=dry_run, outcome=outcome)
     reporter.print_summary()
+    if outcome != "success":
+        raise click.exceptions.Exit(1)
 
 
 # ──────────────────────────────────────────────

@@ -14,7 +14,9 @@ so whitespace or encoding differences don't create false positives.
 
 import hashlib
 import fnmatch
+import os
 import shutil
+import tempfile
 from threading import Event
 from typing import Callable
 from pathlib import Path
@@ -29,6 +31,9 @@ class SyncCancelled(Exception):
         self.results = _copy_results(results or _empty_results())
 
 
+_CAPTURE_FILE_STATE = object()
+
+
 def _empty_results() -> dict:
     return {
         "added": [], "updated": [], "removed": [], "unchanged": [],
@@ -38,6 +43,172 @@ def _empty_results() -> dict:
 
 def _copy_results(results: dict) -> dict:
     return {key: list(results.get(key, [])) for key in _empty_results()}
+
+
+class _SyncTransaction:
+    """Journal filesystem changes so a failed run can reverse them."""
+
+    def __init__(self, target: Path):
+        self.target = target
+        self.workspace = None
+        self.journal = []
+        self.files_before = {}
+        self.dirs_before = {}
+
+    def _ensure_workspace(self):
+        if self.workspace is not None:
+            return
+
+        parent = self.target if self.target.is_dir() else self.target.parent
+        while not parent.exists():
+            parent = parent.parent
+        self.workspace = Path(tempfile.mkdtemp(prefix=".mcru-transaction-", dir=parent))
+
+    def _track_file(self, path: Path, original=_CAPTURE_FILE_STATE):
+        if path in self.files_before:
+            return
+        if original is _CAPTURE_FILE_STATE:
+            original = hashlib.md5(path.read_bytes()).hexdigest() if path.is_file() else None
+        self.files_before[path] = original
+
+    def _track_dir(self, path: Path, existed: bool):
+        self.dirs_before.setdefault(path, existed)
+
+    def _backup_path(self) -> Path:
+        return self.workspace / f"file-{len(self.journal):06d}"
+
+    def ensure_directory(self, path: Path):
+        self._ensure_workspace()
+        missing = []
+        current = path
+        while not current.exists():
+            missing.append(current)
+            if current.parent == current:
+                raise OSError(f"No existing parent directory for {path}")
+            current = current.parent
+
+        for directory in reversed(missing):
+            directory.mkdir()
+            self._track_dir(directory, False)
+            self.journal.append(("remove_dir", directory))
+
+    def copy_file(self, source: Path, destination: Path, is_update: bool):
+        self._ensure_workspace()
+        self.ensure_directory(destination.parent)
+        backup = None
+        if is_update:
+            self._track_file(destination)
+            backup = self._backup_path()
+            shutil.copy2(destination, backup)
+        else:
+            self._track_file(destination, None)
+
+        descriptor, stage_name = tempfile.mkstemp(
+            prefix=f".{destination.name}.mcru-",
+            suffix=".tmp",
+            dir=destination.parent,
+        )
+        os.close(descriptor)
+        staged = Path(stage_name)
+        self._track_file(staged, None)
+        self.journal.append(("remove_file", staged))
+        shutil.copy2(source, staged)
+
+        if is_update:
+            self.journal.append(("restore_file", destination, backup))
+        else:
+            self.journal.append(("remove_file", destination))
+        os.replace(staged, destination)
+
+    def remove_file(self, path: Path):
+        self._ensure_workspace()
+        self._track_file(path)
+        backup = self._backup_path()
+        shutil.copy2(path, backup)
+        self.journal.append(("restore_file", path, backup))
+        path.unlink(missing_ok=True)
+
+    def remove_directory(self, path: Path):
+        self._ensure_workspace()
+        metadata = path.stat()
+        self._track_dir(path, True)
+        self.journal.append((
+            "restore_dir", path, metadata.st_mode, metadata.st_atime, metadata.st_mtime,
+        ))
+        path.rmdir()
+
+    def rollback(self):
+        errors = []
+        for entry in reversed(self.journal):
+            action, path, *details = entry
+            try:
+                if action == "remove_file":
+                    path.unlink(missing_ok=True)
+                elif action == "restore_file":
+                    backup, = details
+                    if not path.exists():
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(backup, path)
+                elif action == "remove_dir":
+                    if path.exists():
+                        path.rmdir()
+                elif action == "restore_dir":
+                    mode, atime, mtime = details
+                    if not path.exists():
+                        path.mkdir()
+                        os.chmod(path, mode)
+                        os.utime(path, (atime, mtime))
+            except Exception as error:
+                errors.append((self._display_path(path), str(error)))
+        return errors
+
+    def net_changes(self):
+        changes = {key: [] for key in ("added", "updated", "removed", "dirs_added", "dirs_removed")}
+        errors = []
+
+        for path, original in self.files_before.items():
+            try:
+                exists = path.is_file()
+                current = hashlib.md5(path.read_bytes()).hexdigest() if exists else None
+            except Exception as error:
+                errors.append((self._display_path(path), f"Could not inspect retained file: {error}"))
+                continue
+            rel_path = self._display_path(path)
+            if original is None and exists:
+                changes["added"].append(rel_path)
+            elif original is not None and not exists:
+                changes["removed"].append(rel_path)
+            elif original is not None and current != original:
+                changes["updated"].append(rel_path)
+
+        for path, existed in self.dirs_before.items():
+            try:
+                exists = path.is_dir()
+            except Exception as error:
+                errors.append((self._display_path(path), f"Could not inspect retained directory: {error}"))
+                continue
+            rel_path = self._display_path(path)
+            if rel_path is None:
+                continue
+            if not existed and exists:
+                changes["dirs_added"].append(rel_path)
+            elif existed and not exists:
+                changes["dirs_removed"].append(rel_path)
+        return changes, errors
+
+    def _display_path(self, path: Path):
+        try:
+            relative = path.relative_to(self.target)
+        except ValueError:
+            return str(path)
+        if relative == Path("."):
+            return None
+        return relative.as_posix()
+
+    def cleanup(self):
+        if self.workspace is not None:
+            shutil.rmtree(self.workspace)
+            self.workspace = None
 
 
 class MCRU:
@@ -80,6 +251,58 @@ class MCRU:
         if self.cancel_event is not None and self.cancel_event.is_set():
             raise SyncCancelled("Sync cancelled.", self._partial_results)
 
+    def _apply_step(self, transaction, path, current, total, operation, mutation) -> bool:
+        self._check_cancel()
+        self._progress(current, total, operation)
+        return self._apply_mutation(path, mutation)
+
+    def _apply_mutation(self, path, mutation) -> bool:
+        if self.dry_run:
+            return True
+        try:
+            mutation()
+            return True
+        except Exception as error:
+            self._partial_results["errors"].append((path, str(error)))
+            return False
+
+    def _finish_transaction(self, transaction, failed: bool, results: dict) -> dict:
+        if transaction is None:
+            return {"rollback_complete": None, "recovery_path": None, "rollback_errors": []}
+
+        if not failed:
+            recovery_path = None
+            try:
+                transaction.cleanup()
+            except Exception as error:
+                recovery_path = str(transaction.workspace)
+                results["errors"].append((str(transaction.workspace), f"Could not clean up transaction workspace: {error}"))
+            return {"rollback_complete": None, "recovery_path": recovery_path, "rollback_errors": []}
+
+        rollback_errors = transaction.rollback()
+        changes, inspection_errors = transaction.net_changes()
+        rollback_errors.extend(inspection_errors)
+        for key in ("added", "updated", "removed", "dirs_added", "dirs_removed"):
+            results[key][:] = changes[key]
+
+        complete = not rollback_errors
+        recovery_path = None
+        if complete:
+            try:
+                transaction.cleanup()
+            except Exception as error:
+                recovery_path = str(transaction.workspace)
+                results["errors"].append((str(transaction.workspace), f"Could not clean up transaction workspace: {error}"))
+        else:
+            recovery_path = str(transaction.workspace)
+        for path, message in rollback_errors:
+            results["errors"].append((path, f"Rollback failed: {message}"))
+        return {
+            "rollback_complete": complete,
+            "recovery_path": recovery_path,
+            "rollback_errors": rollback_errors,
+        }
+
     def _run_default(self) -> dict:
         """Run legacy sync behavior with direct source/target path mirroring."""
         self._progress(0, 0, "Scanning source")
@@ -117,105 +340,116 @@ class MCRU:
             if rel_path not in source_files and rel_path not in self.TARGET_PROTECTED_FILES:
                 to_remove.append(rel_path)
 
-        # Apply changes
+        transaction = None if self.dry_run else _SyncTransaction(self.target)
         applied_add = self._partial_results["added"]
         applied_update = self._partial_results["updated"]
         applied_remove = self._partial_results["removed"]
-        errors = self._partial_results["errors"]
-
-        for index, rel_path in enumerate(to_add, 1):
-            self._check_cancel()
-            self._progress(index, len(to_add), "Adding files")
-            try:
-                if not self.dry_run:
-                    self._copy(self.source / rel_path, self.target / rel_path)
-                applied_add.append(rel_path)
-            except Exception as e:
-                errors.append((rel_path, str(e)))
-
-        for index, rel_path in enumerate(to_update, 1):
-            self._check_cancel()
-            self._progress(index, len(to_update), "Updating files")
-            try:
-                if not self.dry_run:
-                    self._copy(self.source / rel_path, self.target / rel_path)
-                applied_update.append(rel_path)
-            except Exception as e:
-                errors.append((rel_path, str(e)))
-
-        for index, rel_path in enumerate(to_remove, 1):
-            self._check_cancel()
-            self._progress(index, len(to_remove), "Removing files")
-            try:
-                if not self.dry_run:
-                    (self.target / rel_path).unlink(missing_ok=True)
-                applied_remove.append(rel_path)
-            except Exception as e:
-                errors.append((rel_path, str(e)))
-
-        # ── Directory sync ───────────────────────────────────────────
         dirs_added = self._partial_results["dirs_added"]
         dirs_removed = self._partial_results["dirs_removed"]
+        failed = False
 
-        source_dirs = self._scan_all_dirs(self.source)
-        self._check_cancel()
+        try:
+            for index, rel_path in enumerate(to_add, 1):
+                if not self._apply_step(
+                    transaction, rel_path, index, len(to_add), "Adding files",
+                    lambda rel=rel_path: transaction.copy_file(
+                        self.source / rel, self.target / rel, False,
+                    ),
+                ):
+                    failed = True
+                    break
+                applied_add.append(rel_path)
 
-        # Create source directories missing from target (sorted: parents before children)
-        sorted_source_dirs = sorted(source_dirs)
-        for index, rel_dir in enumerate(sorted_source_dirs, 1):
-            self._check_cancel()
-            self._progress(index, len(sorted_source_dirs), "Adding directories")
-            target_dir_path = self.target / rel_dir
-            if not target_dir_path.exists():
-                try:
-                    if not self.dry_run:
-                        target_dir_path.mkdir(parents=True, exist_ok=True)
-                    dirs_added.append(rel_dir)
-                except Exception as e:
-                    errors.append((rel_dir + "/", str(e)))
+            if not failed:
+                for index, rel_path in enumerate(to_update, 1):
+                    if not self._apply_step(
+                        transaction, rel_path, index, len(to_update), "Updating files",
+                        lambda rel=rel_path: transaction.copy_file(
+                            self.source / rel, self.target / rel, True,
+                        ),
+                    ):
+                        failed = True
+                        break
+                    applied_update.append(rel_path)
 
-        # Remove orphan target dirs not in source
-        # In live mode: only remove if actually empty (deepest first so children go first)
-        # In dry-run mode: flag dirs that are currently empty or would be empty after file removals
-        to_remove_set = set(to_remove)
-        target_dirs = sorted(self._scan_all_dirs(self.target), reverse=True)  # deepest first
+            if not failed:
+                for index, rel_path in enumerate(to_remove, 1):
+                    if not self._apply_step(
+                        transaction, rel_path, index, len(to_remove), "Removing files",
+                        lambda rel=rel_path: transaction.remove_file(self.target / rel),
+                    ):
+                        failed = True
+                        break
+                    applied_remove.append(rel_path)
 
-        for index, rel_dir in enumerate(target_dirs, 1):
-            self._check_cancel()
-            self._progress(index, len(target_dirs), "Removing directories")
-            if rel_dir in source_dirs:
-                continue
-            target_dir_path = self.target / rel_dir
-            if not target_dir_path.exists():
-                continue
-            if self.dry_run:
-                # A dir would be removable if all files inside it are scheduled for removal
-                files_inside = [
-                    item.relative_to(self.target).as_posix()
-                    for item in target_dir_path.rglob("*") if item.is_file()
-                ]
-                if not files_inside or all(f in to_remove_set for f in files_inside):
-                    dirs_removed.append(rel_dir)
-            else:
-                # Only remove if the dir is now empty (children removed first due to reverse sort)
-                if not any(target_dir_path.iterdir()):
-                    try:
-                        target_dir_path.rmdir()
+            if not failed:
+                source_dirs = self._scan_all_dirs(self.source)
+                self._check_cancel()
+
+                for index, rel_dir in enumerate(sorted(source_dirs), 1):
+                    target_dir_path = self.target / rel_dir
+                    if not target_dir_path.exists():
+                        if not self._apply_step(
+                            transaction, rel_dir + "/", index, len(source_dirs), "Adding directories",
+                            lambda path=target_dir_path: transaction.ensure_directory(path),
+                        ):
+                            failed = True
+                            break
+                        dirs_added.append(rel_dir)
+                    else:
+                        self._check_cancel()
+                        self._progress(index, len(source_dirs), "Adding directories")
+
+            if not failed:
+                to_remove_set = set(to_remove)
+                target_dirs = sorted(self._scan_target_dirs(transaction), reverse=True)
+
+                for index, rel_dir in enumerate(target_dirs, 1):
+                    self._check_cancel()
+                    self._progress(index, len(target_dirs), "Removing directories")
+                    if rel_dir in source_dirs:
+                        continue
+                    target_dir_path = self.target / rel_dir
+                    if not target_dir_path.exists():
+                        continue
+                    if self.dry_run:
+                        files_inside = [
+                            item.relative_to(self.target).as_posix()
+                            for item in target_dir_path.rglob("*") if item.is_file()
+                        ]
+                        if not files_inside or all(path in to_remove_set for path in files_inside):
+                            dirs_removed.append(rel_dir)
+                    elif not any(target_dir_path.iterdir()):
+                        if not self._apply_mutation(
+                            rel_dir + "/",
+                            lambda path=target_dir_path: transaction.remove_directory(path),
+                        ):
+                            failed = True
+                            break
                         dirs_removed.append(rel_dir)
-                    except Exception as e:
-                        errors.append((rel_dir + "/", str(e)))
 
-        self._check_cancel()
-        self._progress(1, 1, "Complete")
-        return {
+            if not failed:
+                self._check_cancel()
+            self._progress(1, 1, "Complete")
+        except SyncCancelled:
+            if transaction is not None:
+                try:
+                    transaction.cleanup()
+                except OSError:
+                    pass
+            raise
+
+        results = {
             "added": applied_add,
             "updated": applied_update,
             "removed": applied_remove,
             "unchanged": unchanged,
             "dirs_added": dirs_added,
             "dirs_removed": dirs_removed,
-            "errors": errors,
+            "errors": self._partial_results["errors"],
         }
+        results.update(self._finish_transaction(transaction, failed, results))
+        return results
 
     def _run_with_mapping(self) -> dict:
         """Run sync behavior based on source->target mapping categories."""
@@ -257,54 +491,70 @@ class MCRU:
             ):
                 to_remove.append(rel_path)
 
+        transaction = None if self.dry_run else _SyncTransaction(self.target)
         applied_add = self._partial_results["added"]
         applied_update = self._partial_results["updated"]
         applied_remove = self._partial_results["removed"]
-        errors = self._partial_results["errors"]
+        failed = False
 
-        for index, target_rel in enumerate(to_add, 1):
-            self._check_cancel()
-            self._progress(index, len(to_add), "Adding files")
-            try:
-                if not self.dry_run:
-                    source_rel = source_to_target[target_rel]
-                    self._copy(self.source / source_rel, self.target / target_rel)
+        try:
+            for index, target_rel in enumerate(to_add, 1):
+                source_rel = source_to_target[target_rel]
+                if not self._apply_step(
+                    transaction, target_rel, index, len(to_add), "Adding files",
+                    lambda source=source_rel, target=target_rel: transaction.copy_file(
+                        self.source / source, self.target / target, False,
+                    ),
+                ):
+                    failed = True
+                    break
                 applied_add.append(target_rel)
-            except Exception as e:
-                errors.append((target_rel, str(e)))
 
-        for index, target_rel in enumerate(to_update, 1):
-            self._check_cancel()
-            self._progress(index, len(to_update), "Updating files")
-            try:
-                if not self.dry_run:
+            if not failed:
+                for index, target_rel in enumerate(to_update, 1):
                     source_rel = source_to_target[target_rel]
-                    self._copy(self.source / source_rel, self.target / target_rel)
-                applied_update.append(target_rel)
-            except Exception as e:
-                errors.append((target_rel, str(e)))
+                    if not self._apply_step(
+                        transaction, target_rel, index, len(to_update), "Updating files",
+                        lambda source=source_rel, target=target_rel: transaction.copy_file(
+                            self.source / source, self.target / target, True,
+                        ),
+                    ):
+                        failed = True
+                        break
+                    applied_update.append(target_rel)
 
-        for index, target_rel in enumerate(to_remove, 1):
-            self._check_cancel()
-            self._progress(index, len(to_remove), "Removing files")
-            try:
-                if not self.dry_run:
-                    (self.target / target_rel).unlink(missing_ok=True)
-                applied_remove.append(target_rel)
-            except Exception as e:
-                errors.append((target_rel, str(e)))
+            if not failed:
+                for index, target_rel in enumerate(to_remove, 1):
+                    if not self._apply_step(
+                        transaction, target_rel, index, len(to_remove), "Removing files",
+                        lambda target=target_rel: transaction.remove_file(self.target / target),
+                    ):
+                        failed = True
+                        break
+                    applied_remove.append(target_rel)
 
-        self._check_cancel()
-        self._progress(1, 1, "Complete")
-        return {
+            if not failed:
+                self._check_cancel()
+            self._progress(1, 1, "Complete")
+        except SyncCancelled:
+            if transaction is not None:
+                try:
+                    transaction.cleanup()
+                except OSError:
+                    pass
+            raise
+
+        results = {
             "added": applied_add,
             "updated": applied_update,
             "removed": applied_remove,
             "unchanged": unchanged,
-            "dirs_added": [],
-            "dirs_removed": [],
-            "errors": errors,
+            "dirs_added": self._partial_results["dirs_added"],
+            "dirs_removed": self._partial_results["dirs_removed"],
+            "errors": self._partial_results["errors"],
         }
+        results.update(self._finish_transaction(transaction, failed, results))
+        return results
 
     # ──────────────────────────────────────────────
     # Internals
@@ -331,9 +581,18 @@ class MCRU:
                 result.add(d.relative_to(folder).as_posix())
         return result
 
-    def _copy(self, source_path: Path, target_path: Path):
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source_path, target_path)
+    def _scan_target_dirs(self, transaction) -> set:
+        result = self._scan_all_dirs(self.target)
+        if transaction is not None and transaction.workspace is not None:
+            try:
+                workspace_rel = transaction.workspace.relative_to(self.target).as_posix()
+            except ValueError:
+                return result
+            result = {
+                rel_path for rel_path in result
+                if rel_path != workspace_rel and not rel_path.startswith(workspace_rel + "/")
+            }
+        return result
 
     def _build_source_target_map(self) -> dict[str, str]:
         source_roots = self.mapping.get("source_roots", {})

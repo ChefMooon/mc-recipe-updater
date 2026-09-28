@@ -778,10 +778,14 @@ class RunProfileScreen(Screen):
                 break
 
             runs.append((profile_name, config, results))
+            run_outcome = _classify_outcome(results, [], [], False, None, True)
             if backup_id:
                 try:
-                    self.backup_manager.finalize_backup(backup_id, "success")
-                    self.backup_manager.rotate_backups(self.global_config.get("backup.max_backups", 10))
+                    self.backup_manager.finalize_backup(
+                        backup_id, "success" if run_outcome == "success" else "failed"
+                    )
+                    if run_outcome == "success":
+                        self.backup_manager.rotate_backups(self.global_config.get("backup.max_backups", 10))
                 except Exception as err:
                     warnings.append(f"{profile_name} backup finalization/rotation failed: {err}")
             if (options["changelog"] or config.get("target_changelog")) and not options["dry_run"]:
@@ -863,14 +867,24 @@ class RunProfileScreen(Screen):
         report_path = None
         backup_status = "none"
         post_warnings: list[str] = []
+        sync_outcome = _classify_outcome(
+            results or _empty_result_summary(),
+            [],
+            [],
+            isinstance(error, SyncCancelled),
+            error if not isinstance(error, SyncCancelled) else None,
+            bool(results),
+        )
         if backup_id:
             try:
-                self.backup_manager.finalize_backup(backup_id, "failed" if error else "success")
+                self.backup_manager.finalize_backup(
+                    backup_id, "success" if sync_outcome == "success" else "failed"
+                )
                 backup_status = backup_id
             except Exception as err:
                 backup_status = f"finalize failed: {err}"
                 post_warnings.append(f"Backup finalization failed: {err}")
-            if not error:
+            if sync_outcome == "success":
                 try:
                     self.backup_manager.rotate_backups(self.global_config.get("backup.max_backups", 10))
                 except Exception as err:
@@ -970,10 +984,24 @@ class RunProfileScreen(Screen):
 
 
 def _aggregate_results(results_list: list[dict]) -> dict:
-    aggregate = {"added": [], "updated": [], "removed": [], "unchanged": [], "dirs_added": [], "dirs_removed": [], "errors": []}
+    aggregate = {"added": [], "updated": [], "removed": [], "unchanged": [], "dirs_added": [], "dirs_removed": [], "errors": [], "rollback_errors": []}
+    rollback_results = [
+        results["rollback_complete"]
+        for results in results_list
+        if results.get("rollback_complete") is not None
+    ]
+    recovery_paths = list(dict.fromkeys(
+        results.get("recovery_path")
+        for results in results_list
+        if results.get("recovery_path")
+    ))
     for results in results_list:
         for key in aggregate:
             aggregate[key].extend(results.get(key, []))
+    if rollback_results:
+        aggregate["rollback_complete"] = all(rollback_results)
+    if recovery_paths:
+        aggregate["recovery_paths"] = recovery_paths
     return aggregate
 
 
@@ -995,7 +1023,22 @@ def _format_result_summary(results: dict | None) -> str:
         lines.append("[bold red]Errors[/bold red]")
         for file_path, err in results.get("errors", [])[:10]:
             lines.append(f"{file_path}: {err}")
+    rollback_errors = _unreported_rollback_errors(results)
+    if rollback_errors:
+        lines.append("")
+        lines.append("[bold red]Rollback errors[/bold red]")
+        for file_path, err in rollback_errors[:10]:
+            lines.append(f"{file_path}: {err}")
     return "\n".join(lines)
+
+
+def _unreported_rollback_errors(results: dict) -> list[tuple[str, str]]:
+    errors = results.get("errors", [])
+    return [
+        (path, message)
+        for path, message in results.get("rollback_errors", [])
+        if (path, f"Rollback failed: {message}") not in errors
+    ]
 
 
 def _empty_result_summary() -> dict:
@@ -1006,6 +1049,10 @@ def _classify_outcome(results: dict, skipped: list, warnings: list, cancelled: b
     if cancelled:
         return "cancelled"
     mutations = sum(len(results.get(key, [])) for key in ("added", "updated", "removed", "dirs_added", "dirs_removed"))
+    if results.get("rollback_complete") is False:
+        return "partial"
+    if results.get("rollback_complete") is True:
+        return "partial" if mutations else "failed"
     if error:
         return "partial" if mutations or ran else "failed"
     if results.get("errors"):
@@ -1018,6 +1065,14 @@ def _classify_outcome(results: dict, skipped: list, warnings: list, cancelled: b
 def _format_outcome_summary(outcome: str, results: dict | None) -> str:
     color = {"success": "green", "partial": "yellow", "failed": "red", "cancelled": "yellow"}[outcome]
     lines = [f"[bold {color}]Outcome: {outcome}[/bold {color}]", "", _format_result_summary(results)]
+    if results and results.get("rollback_complete") is True:
+        lines.extend(["", "[green]Rollback completed; failed changes were restored.[/green]"])
+    elif results and results.get("rollback_complete") is False:
+        lines.extend(["", "[bold yellow]Rollback incomplete; the target may retain changes.[/bold yellow]"])
+        recovery_paths = results.get("recovery_paths") or [results.get("recovery_path")]
+        recovery_paths = [path for path in recovery_paths if path]
+        if recovery_paths:
+            lines.append(f"[yellow]Recovery data: {', '.join(recovery_paths)}[/yellow]")
     if outcome == "cancelled":
         lines.extend(["", "[yellow]Completed changes were not rolled back.[/yellow]"])
     return "\n".join(lines)

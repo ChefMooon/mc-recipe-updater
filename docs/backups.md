@@ -7,13 +7,24 @@ and usage patterns.
 
 # Backups
 
-Before every sync run (including `mcru quick`), mcru takes an automatic full snapshot of the **entire target folder** and saves it as a `.zip` file. Backups are stored in `~/.mcru/backups/` and are automatically rotated — by default, the last 10 backups are kept. Older backups are pruned after each successful run.
+Persistent ZIP backups are optional and enabled by default. When enabled, mcru takes a full snapshot of the **entire target folder** before each sync run (including `mcru quick`). Backups are stored in `~/.mcru/backups/` and are rotated after successful runs — by default, the last 10 non-pinned backups are kept. Control backups globally with `backup.enabled` or override the setting for a run with `--backup` or `--no-backup`.
 
 Backups allow you to:
-- Restore the target folder to any previous state
+- Restore files from a previous snapshot
 - Pin important backups to prevent auto-deletion
 - Label backups with notes for easy identification
 - View what files were in each backup without extracting
+
+## Automatic Sync Rollback
+
+Automatic transaction rollback is separate from persistent ZIP backups and works even when persistent backups are disabled. During a live sync, if a filesystem mutation fails and the failure is caught, mcru stops applying changes and attempts to reverse mutations already made in that run.
+
+- If rollback completes, the target is restored to its pre-run state and the run is reported as `failed`.
+- If rollback is incomplete, the run is reported as `partial`; transaction recovery data is retained and its location is surfaced in the failure details.
+- If the run had an associated persistent backup, that backup is marked `failed`. The failed run does not trigger successful-run rotation; the backup remains subject to rotation during a later successful run.
+- Cancellation behavior is unchanged: completed changes are not rolled back.
+
+Transaction rollback covers caught live sync mutation failures only. It does not cover process termination, power loss, or concurrent external edits to the target.
 
 ## Overview
 
@@ -37,7 +48,7 @@ After a successful sync run, backups are automatically pruned:
 2. **If count exceeds the limit** (default 10), delete the oldest non-pinned backups until within limit.
 3. **Pinned backups are preserved** and don't count toward the limit.
 
-Failed runs leave their backups in place and count toward the rotation limit, so you can restore if needed.
+When a run fails, its associated backup is marked `failed` and is not rotated as part of that failed run. It counts toward the rotation limit and may be pruned by a later successful run's normal rotation.
 
 ## Storage
 
@@ -153,7 +164,7 @@ mcru config get backup  # Show the entire backup config block
 
 ### Failed Runs
 
-If a sync run **fails**, the backup is marked with `"run_result": "failed"` and is **kept**. It counts toward the `max_backups` limit and can be pruned like any other unpinned backup.
+If a sync run **fails**, its associated backup is marked with `"run_result": "failed"` and is kept by that run. Failed runs do not trigger rotation; the backup still counts toward `max_backups` and may be pruned by a later successful run's rotation like any other unpinned backup.
 
 ## Pinning
 
@@ -255,7 +266,7 @@ mcru backup restore backup_recipes_20250307_143022 --yes
 **Behavior:**
 1. Prints backup details and target path.
 2. Prompts for confirmation (unless `--yes` passed).
-3. Extracts the zip to the target path (overwrites existing files).
+3. Extracts the zip to the target path, overwriting files with matching paths. Files in the target that are absent from the archive are left in place; manual restore is an overlay, not an exact rollback.
 4. Prints success message with file count.
 
 ### `mcru backup delete <id> [--force]`

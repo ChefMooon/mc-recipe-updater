@@ -15,9 +15,11 @@ import pytest
 import json
 import tempfile
 import zipfile
+from click.testing import CliRunner
 from itertools import count
 from pathlib import Path
 from datetime import datetime
+import cli as cli_module
 import backup as backup_module
 from backup import BackupManager, BackupEntry
 
@@ -279,6 +281,80 @@ def test_prune_deletes_only_the_confirmed_candidate_ids(backup_manager, temp_tar
 class TestBackupCLIIntegration:
     """Tests for backup CLI command integration"""
 
+    def _install_failed_sync(self, monkeypatch, backup_manager, source, target, rollback_complete):
+        outcome_calls = []
+
+        class _ConfigManager:
+            def get_profile(self, name):
+                if name == "profile":
+                    return {"name": name, "source": str(source), "target": str(target), "parsers": []}
+                return None
+
+            def get_suite(self, name):
+                return {"name": name, "profiles": ["profile"]} if name == "suite" else None
+
+            def get_mapping_preset(self, _name):
+                raise AssertionError("mapping lookup was not expected")
+
+        class _GlobalConfig:
+            def get(self, key, default=None):
+                return {"backup.enabled": True, "backup.max_backups": 0}.get(key, default)
+
+        class _MCRU:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def run(self):
+                return {
+                    "added": [],
+                    "updated": [],
+                    "removed": [],
+                    "unchanged": [],
+                    "dirs_added": [],
+                    "dirs_removed": [],
+                    "errors": [("bad.json", "injected mutation failure")],
+                    "rollback_complete": rollback_complete,
+                    "recovery_path": "transaction-recovery" if rollback_complete is False else None,
+                    "rollback_errors": [],
+                }
+
+        class _Reporter:
+            def __init__(self, _name, _config, _results, dry_run=False, outcome="success"):
+                outcome_calls.append(outcome)
+
+            def print_summary(self):
+                pass
+
+            def save_report(self):
+                return "profile-report.txt"
+
+        class _SuiteReporter:
+            def __init__(self, _name, _runs, dry_run=False, outcome="success"):
+                outcome_calls.append(outcome)
+
+            def print_summary(self):
+                pass
+
+            def save_report(self):
+                return "suite-report.txt"
+
+        monkeypatch.setattr(cli_module, "ConfigManager", _ConfigManager)
+        monkeypatch.setattr(cli_module, "GlobalConfig", _GlobalConfig)
+        monkeypatch.setattr(cli_module, "BackupManager", lambda: backup_manager)
+        monkeypatch.setattr(cli_module, "MCRU", _MCRU)
+        monkeypatch.setattr(cli_module, "Reporter", _Reporter)
+        monkeypatch.setattr(cli_module, "SuiteReporter", _SuiteReporter)
+        return outcome_calls
+
+    @staticmethod
+    def _make_run_dirs(tmp_path):
+        source = tmp_path / "source"
+        target = tmp_path / "target"
+        source.mkdir()
+        target.mkdir()
+        (target / "before.txt").write_text("before")
+        return source, target
+
     def test_run_with_no_backup_flag_skips_backup(self, monkeypatch):
         """mcru run --no-backup should skip backup creation."""
         # This would be tested with Click's CliRunner
@@ -290,6 +366,49 @@ class TestBackupCLIIntegration:
         # This would be tested with Click's CliRunner
         # Placeholder for full integration test
         pass
+
+    def test_profile_mutation_failure_marks_backup_failed_and_skips_rotation(
+        self, monkeypatch, tmp_path, backup_manager
+    ):
+        source, target = self._make_run_dirs(tmp_path)
+        outcomes = self._install_failed_sync(
+            monkeypatch, backup_manager, source, target, rollback_complete=True
+        )
+
+        result = CliRunner().invoke(cli_module.cli, ["run", "profile", "--no-report"])
+
+        assert result.exit_code == 1
+        assert outcomes == ["failed"]
+        backups = backup_manager.list_backups(profile="profile")
+        assert len(backups) == 1
+        assert backups[0].run_result == "failed"
+
+    def test_suite_mutation_failure_marks_backup_failed_and_reports_partial(
+        self, monkeypatch, tmp_path, backup_manager
+    ):
+        source, target = self._make_run_dirs(tmp_path)
+        outcomes = self._install_failed_sync(
+            monkeypatch, backup_manager, source, target, rollback_complete=False
+        )
+
+        result = CliRunner().invoke(cli_module.cli, ["run", "suite", "--no-report"])
+
+        assert result.exit_code == 1
+        assert outcomes == ["partial"]
+        backups = backup_manager.list_backups(profile="profile")
+        assert len(backups) == 1
+        assert backups[0].run_result == "failed"
+
+    def test_quick_mutation_failure_is_not_reported_as_success(self, monkeypatch, tmp_path, backup_manager):
+        source, target = self._make_run_dirs(tmp_path)
+        outcomes = self._install_failed_sync(
+            monkeypatch, backup_manager, source, target, rollback_complete=True
+        )
+
+        result = CliRunner().invoke(cli_module.cli, ["quick", str(source), str(target)])
+
+        assert result.exit_code == 1
+        assert outcomes == ["failed"]
 
 
 if __name__ == "__main__":

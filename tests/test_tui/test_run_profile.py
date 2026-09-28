@@ -50,6 +50,17 @@ def _empty_results():
     }
 
 
+def _failed_results(rollback_complete, recovery_path=None):
+    results = _empty_results()
+    results["errors"].append(("bad.json", "injected mutation failure"))
+    results.update(
+        rollback_complete=rollback_complete,
+        recovery_path=recovery_path,
+        rollback_errors=[] if rollback_complete else [("bad.json", "restore denied")],
+    )
+    return results
+
+
 class _FakeApp:
     def __init__(self):
         self.exited = False
@@ -663,6 +674,127 @@ def test_cancelled_profile_summary_includes_partial_counts_and_no_rollback(monke
     assert captured["status"] == "Run cancelled."
 
 
+def test_profile_complete_reports_restored_rollback_and_finalizes_backup_failed(monkeypatch):
+    screen = run_profile.RunProfileScreen(_DummyConfigManager())
+    screen._run_id = 8
+    captured = {}
+    finalized = []
+    rotated = []
+
+    class _BackupManager:
+        def finalize_backup(self, backup_id, result):
+            finalized.append((backup_id, result))
+
+        def rotate_backups(self, _max_backups):
+            rotated.append(True)
+
+    class _Reporter:
+        def __init__(self, _name, _config, _results, dry_run=False, outcome="success"):
+            captured["outcome"] = outcome
+
+        def save_report(self):
+            return "profile-report.txt"
+
+    screen.backup_manager = _BackupManager()
+    monkeypatch.setattr(run_profile, "Reporter", _Reporter)
+    monkeypatch.setattr(
+        screen,
+        "_switch_to_results",
+        lambda summary, details: captured.update(summary=summary, details=details),
+    )
+    monkeypatch.setattr(screen, "_set_status", lambda status: captured.update(status=status))
+
+    screen._on_profile_complete(
+        8,
+        "selected",
+        {"target": "target"},
+        {"dry_run": False, "changelog": False},
+        "backup-selected",
+        _failed_results(True),
+        None,
+    )
+
+    assert captured["outcome"] == "failed"
+    assert "Rollback completed; failed changes were restored." in captured["summary"]
+    assert captured["status"] == "Run failed."
+    assert finalized == [("backup-selected", "failed")]
+    assert rotated == []
+
+
+def test_suite_worker_reports_incomplete_rollback_and_keeps_backup_failed(monkeypatch, tmp_path):
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.mkdir()
+    target.mkdir()
+    screen = run_profile.RunProfileScreen(_ProfileConfigManager(source, target))
+    screen._run_id = 11
+    screen.global_config = type("_GlobalConfig", (), {"get": lambda *_args: 10})()
+    finalized = []
+    rotated = []
+    outcomes = []
+    completion = []
+    captured = {}
+
+    class _BackupManager:
+        def create_backup(self, _target, _profile):
+            return "backup-selected"
+
+        def finalize_backup(self, backup_id, result):
+            finalized.append((backup_id, result))
+
+        def rotate_backups(self, _max_backups):
+            rotated.append(True)
+
+    class _FailedMCRU:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def run(self):
+            return _failed_results(False, "transaction-recovery")
+
+    class _SuiteReporter:
+        def __init__(self, _name, _runs, dry_run=False, outcome="success"):
+            outcomes.append(outcome)
+
+        def save_report(self):
+            return "suite-report.txt"
+
+    screen.backup_manager = _BackupManager()
+    screen._prepare_profile_config = lambda _name, _options: {
+        "source": str(source),
+        "target": str(target),
+        "parsers": [],
+    }
+    screen._dispatch_to_app = lambda callback, *args: completion.append((callback, args))
+    monkeypatch.setattr(run_profile, "MCRU", _FailedMCRU)
+    monkeypatch.setattr(run_profile, "SuiteReporter", _SuiteReporter)
+    monkeypatch.setattr(
+        screen,
+        "_switch_to_results",
+        lambda summary, details: captured.update(summary=summary, details=details),
+    )
+    monkeypatch.setattr(screen, "_set_status", lambda status: captured.update(status=status))
+
+    screen._run_suite_worker(
+        11,
+        "suite",
+        {"profiles": ["selected"]},
+        {"dry_run": False, "backup": True, "changelog": False},
+        threading.Event(),
+    )
+
+    assert outcomes == ["partial"]
+    assert finalized == [("backup-selected", "failed")]
+    assert rotated == []
+    completion[0][0](*completion[0][1])
+    assert "Outcome: partial" in captured["summary"]
+    assert "Rollback incomplete; the target may retain changes." in captured["summary"]
+    assert "Rollback errors" in captured["summary"]
+    assert "restore denied" in captured["summary"]
+    assert "transaction-recovery" in captured["summary"]
+    assert captured["status"] == "Suite run partial."
+
+
 def test_cancel_back_and_new_run_uses_fresh_cancellation_event(monkeypatch):
     screen = run_profile.RunProfileScreen(_ProfileConfigManager("source", "target"))
     old_event = threading.Event()
@@ -714,6 +846,8 @@ def test_run_outcome_classification_distinguishes_success_partial_failed_and_can
     assert run_profile._classify_outcome(clean, [], [], False, None, True) == "success"
     assert run_profile._classify_outcome(with_changes, [], ["rotation failed"], False, None, True) == "partial"
     assert run_profile._classify_outcome(failed_operations, [], [], False, None, True) == "failed"
+    assert run_profile._classify_outcome(_failed_results(True), [], [], False, None, True) == "failed"
+    assert run_profile._classify_outcome(_failed_results(False), [], [], False, None, True) == "partial"
     assert run_profile._classify_outcome(clean, [("missing", "not found")], [], False, None, False) == "failed"
     assert run_profile._classify_outcome(with_changes, [], [], True, None, True) == "cancelled"
 

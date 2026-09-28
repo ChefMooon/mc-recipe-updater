@@ -25,6 +25,27 @@ def _validate_report_outcome(outcome: str) -> str:
     return outcome
 
 
+def _rollback_description(results: dict) -> str | None:
+    rollback_complete = results.get("rollback_complete")
+    if rollback_complete is True:
+        return "complete; failed changes were restored"
+    if rollback_complete is False:
+        recovery_path = results.get("recovery_path")
+        if recovery_path:
+            return f"incomplete; recovery data: {recovery_path}"
+        return "incomplete; the target may retain changes"
+    return None
+
+
+def _unreported_rollback_errors(results: dict) -> list[tuple[str, str]]:
+    errors = results.get("errors", [])
+    return [
+        (path, message)
+        for path, message in results.get("rollback_errors", [])
+        if (path, f"Rollback failed: {message}") not in errors
+    ]
+
+
 # ──────────────────────────────────────────────────────────────
 # Profile List Formatter — formats profiles as ASCII cards
 # ──────────────────────────────────────────────────────────────
@@ -231,6 +252,10 @@ class Reporter:
         click.echo(f"{'─'*60}")
         click.echo(f"  Sync Report  [{mode}]  {self.timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
         click.echo(f"{'─'*60}")
+        click.echo(f"  Outcome: {self.outcome}")
+        rollback_description = _rollback_description(r)
+        if rollback_description:
+            click.echo(f"  Rollback: {rollback_description}")
 
         if r["added"]:
             click.echo(click.style(f"\n  ➕ Added ({len(r['added'])})", fg="green", bold=True))
@@ -261,10 +286,18 @@ class Reporter:
             click.echo(click.style(f"\n  ⚠️  Errors ({len(r['errors'])})", fg="bright_red", bold=True))
             for f, err in r["errors"]:
                 click.echo(f"     {f}: {err}")
+        rollback_errors = _unreported_rollback_errors(r)
+        if rollback_errors:
+            click.echo(click.style(f"\n  Rollback errors ({len(rollback_errors)})", fg="bright_red", bold=True))
+            for path, err in rollback_errors:
+                click.echo(f"     {path}: {err}")
 
         click.echo(f"\n  {'─'*40}")
         if total_changes == 0:
-            click.echo(click.style("  ✅  Folders are already in sync.", fg="bright_green"))
+            if r["errors"]:
+                click.echo("  No successful changes to report.")
+            else:
+                click.echo(click.style("  ✅  Folders are already in sync.", fg="bright_green"))
         else:
             summary = []
             if r["added"]:                  summary.append(f"{len(r['added'])} added")
@@ -294,6 +327,7 @@ class Reporter:
             f"Date     : {self.timestamp.isoformat(timespec='seconds')}",
             f"Mode     : {'DRY RUN' if self.dry_run else 'LIVE'}",
             f"Outcome  : {self.outcome}",
+            *([f"Rollback : {_rollback_description(r)}"] if _rollback_description(r) else []),
             f"Source   : {self.config['source']}",
             f"Target   : {self.config['target']}",
             f"Parsers  : {', '.join(self.config.get('parsers', [])) or 'none'}",
@@ -322,6 +356,13 @@ class Reporter:
         lines += [f"Errors ({len(r['errors'])}):"]
         if r["errors"]:
             lines += [*[f"  ! {f}: {e}" for f, e in r["errors"]], ""]
+        rollback_errors = _unreported_rollback_errors(r)
+        if rollback_errors:
+            lines += [
+                f"Rollback errors ({len(rollback_errors)}):",
+                *[f"  ! {path}: {message}" for path, message in rollback_errors],
+                "",
+            ]
 
         filepath.write_text("\n".join(lines), encoding="utf-8")
         return str(filepath)
@@ -375,6 +416,9 @@ class SuiteReporter:
         click.echo(f"  Source  : {config['source']}")
         click.echo(f"  Target  : {config['target']}")
         click.echo(f"{'─'*60}")
+        rollback_description = _rollback_description(r)
+        if rollback_description:
+            click.echo(f"  Rollback: {rollback_description}")
 
         if r["added"]:
             click.echo(click.style(f"\n  ➕ Added ({len(r['added'])})", fg="green", bold=True))
@@ -405,6 +449,11 @@ class SuiteReporter:
             click.echo(click.style(f"\n  ⚠️  Errors ({len(r['errors'])})", fg="bright_red", bold=True))
             for f, err in r["errors"]:
                 click.echo(f"     {f}: {err}")
+        rollback_errors = _unreported_rollback_errors(r)
+        if rollback_errors:
+            click.echo(click.style(f"\n  Rollback errors ({len(rollback_errors)})", fg="bright_red", bold=True))
+            for path, err in rollback_errors:
+                click.echo(f"     {path}: {err}")
 
         total_changes = (
             len(r["added"]) + len(r["updated"]) + len(r["removed"])
@@ -432,6 +481,7 @@ class SuiteReporter:
         click.echo(f"  Suite Report  [{mode}]  {self.timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
         click.echo(f"  Suite    : {self.suite_name}")
         click.echo(f"  Profiles : {len(self.runs)}")
+        click.echo(f"  Outcome  : {self.outcome}")
         click.echo(f"{'═'*60}")
 
         for profile_name, config, results in self.runs:
@@ -444,7 +494,10 @@ class SuiteReporter:
         click.echo(click.style("  SUITE TOTALS", bold=True))
         click.echo(f"{'═'*60}")
         if total_changes == 0:
-            click.echo(click.style("  ✅  All profiles already in sync.", fg="bright_green"))
+            if t["errors"]:
+                click.echo("  No successful changes to report.")
+            else:
+                click.echo(click.style("  ✅  All profiles already in sync.", fg="bright_green"))
         else:
             if t["added"]:        click.echo(click.style(f"  ➕ Added      : {t['added']}", fg="green"))
             if t["updated"]:      click.echo(click.style(f"  ✏️  Updated    : {t['updated']}", fg="yellow"))
@@ -485,6 +538,7 @@ class SuiteReporter:
                 f"Target   : {config['target']}",
                 f"Parsers  : {', '.join(config.get('parsers', [])) or 'none'}",
                 f"Mapping  : {config.get('mapping_preset') or 'none'}",
+                *([f"Rollback : {_rollback_description(r)}"] if _rollback_description(r) else []),
                 "─" * 60,
                 "",
                 f"Added ({len(r['added'])}): (files)",
@@ -508,6 +562,13 @@ class SuiteReporter:
             ]
             if r["errors"]:
                 lines += [f"Errors ({len(r['errors'])}):", *[f"  ! {f}: {e}" for f, e in r["errors"]], ""]
+            rollback_errors = _unreported_rollback_errors(r)
+            if rollback_errors:
+                lines += [
+                    f"Rollback errors ({len(rollback_errors)}):",
+                    *[f"  ! {path}: {message}" for path, message in rollback_errors],
+                    "",
+                ]
 
         t = self._totals()
         lines += [
