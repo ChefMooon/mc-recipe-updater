@@ -11,10 +11,16 @@ Tests cover:
 import pytest
 import json
 import tempfile
+import hashlib
 from pathlib import Path
+import config as config_module
+import cli as cli_module
+import registry as registry_module
 from config import ConfigManager, CONFIG_FILE, CONFIG_DIR
 from click.testing import CliRunner
 from cli import cli
+from registry import list_parsers
+from syncer import MCRU
 
 
 @pytest.fixture
@@ -29,8 +35,146 @@ def temp_config_dir(monkeypatch, tmp_path):
     monkeypatch.setattr("config.CONFIG_DIR", config_dir)
     monkeypatch.setattr("config.CONFIG_FILE", config_file)
     monkeypatch.setattr("config.SUITES_FILE", config_dir / "suites.json")
+    monkeypatch.setattr("config.GLOBAL_CONFIG_FILE", config_dir / "config.json")
+    monkeypatch.setattr("config.DEFAULT_MAPPING_FILE", config_dir / "mapping-presets.json")
     
     yield config_dir, config_file
+
+
+def test_config_seeds_bundled_presets_only_when_missing(monkeypatch, temp_config_dir):
+    config_dir, _ = temp_config_dir
+    bundled = json.dumps({"presets": {"bundled-default": {}}})
+    monkeypatch.setattr(config_module, "read_bundled_mapping_presets", lambda: bundled)
+
+    ConfigManager()
+
+    mapping_file = config_dir / "mapping-presets.json"
+    assert mapping_file.read_text(encoding="utf-8") == bundled
+
+    user_presets = '{"presets": {"user-edited": {}}}'
+    mapping_file.write_text(user_presets, encoding="utf-8")
+    ConfigManager()
+    assert mapping_file.read_text(encoding="utf-8") == user_presets
+
+
+def test_cli_parser_choices_match_registry():
+    commands = [
+        cli.commands["quick"],
+        cli.commands["profile"].commands["add"],
+        cli.commands["profile"].commands["update"],
+        cli.commands["profile"].commands["set"],
+    ]
+
+    for command in commands:
+        parser_option = next(param for param in command.params if param.name == "parser")
+        assert list(parser_option.type.choices) == list_parsers()
+
+
+def test_cli_reset_presets_copies_bundled_resource(monkeypatch, temp_config_dir):
+    config_dir, _ = temp_config_dir
+    mapping_file = config_dir / "mapping-presets.json"
+    mapping_file.write_text('{"presets": {"user": {}}}', encoding="utf-8")
+    bundled = '{"presets": {"bundled": {}}}'
+    monkeypatch.setattr(cli_module, "DEFAULT_MAPPING_FILE", mapping_file)
+    monkeypatch.setattr(cli_module, "read_bundled_mapping_presets", lambda: bundled)
+
+    result = CliRunner().invoke(cli, ["config", "reset-presets"])
+
+    assert result.exit_code == 0
+    assert json.loads(mapping_file.read_text(encoding="utf-8")) == {"presets": {"bundled": {}}}
+
+
+def test_cli_reset_all_copies_bundled_resource(monkeypatch, tmp_path):
+    config_dir = tmp_path / "mcru"
+    config_dir.mkdir()
+    profiles = config_dir / "profiles.json"
+    suites = config_dir / "suites.json"
+    mapping = config_dir / "mapping-presets.json"
+    profiles.write_text('{"profiles": [{"name": "existing"}]}', encoding="utf-8")
+    mapping.write_text('{"presets": {"user": {}}}', encoding="utf-8")
+    bundled = '{"presets": {"bundled": {}}}'
+
+    monkeypatch.setattr(cli_module, "CONFIG_DIR", config_dir)
+    monkeypatch.setattr(cli_module, "CONFIG_FILE", profiles)
+    monkeypatch.setattr(cli_module, "SUITES_FILE", suites)
+    monkeypatch.setattr(cli_module, "DEFAULT_MAPPING_FILE", mapping)
+    monkeypatch.setattr(cli_module, "read_bundled_mapping_presets", lambda: bundled)
+
+    result = CliRunner().invoke(cli, ["config", "reset"], input="y\n")
+
+    assert result.exit_code == 0
+    assert json.loads(profiles.read_text(encoding="utf-8")) == {"profiles": []}
+    assert json.loads(suites.read_text(encoding="utf-8")) == {"suites": []}
+    assert json.loads(mapping.read_text(encoding="utf-8")) == {"presets": {"bundled": {}}}
+
+
+def test_unknown_persisted_parser_fails_before_sync_mutation(tmp_path, temp_config_dir):
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.mkdir()
+    target.mkdir()
+    (source / "new.json").write_text('{"new": true}', encoding="utf-8")
+    sentinel = target / "existing.json"
+    sentinel.write_text('{"existing": true}', encoding="utf-8")
+
+    _, config_file = temp_config_dir
+    data = json.loads(config_file.read_text(encoding="utf-8"))
+    data["profiles"].append(
+        {
+            "name": "legacy-parser",
+            "source": str(source),
+            "target": str(target),
+            "parsers": ["lowercase_names"],
+        }
+    )
+    config_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    result = CliRunner().invoke(cli, ["run", "legacy-parser", "--no-backup", "--no-report"])
+
+    assert result.exit_code == 1
+    assert "Unknown parser" in result.output
+    assert "lowercase_names" in result.output
+    assert "Available parsers" in result.output
+    assert sentinel.read_text(encoding="utf-8") == '{"existing": true}'
+    assert not (target / "new.json").exists()
+
+
+def test_valid_persisted_parsers_run_in_profile_order(monkeypatch, tmp_path, temp_config_dir):
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.mkdir()
+    target.mkdir()
+    source_file = source / "recipe.json"
+    source_file.write_bytes(b"content")
+
+    _, config_file = temp_config_dir
+    parsers = ["strip_bom", "normalize_line_endings"]
+    data = json.loads(config_file.read_text(encoding="utf-8"))
+    data["profiles"].append(
+        {
+            "name": "ordered-parsers",
+            "source": str(source),
+            "target": str(target),
+            "parsers": parsers,
+        }
+    )
+    config_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    calls = []
+    monkeypatch.setitem(
+        registry_module.PARSERS,
+        parsers[0],
+        lambda content: calls.append(parsers[0]) or content + b"A",
+    )
+    monkeypatch.setitem(
+        registry_module.PARSERS,
+        parsers[1],
+        lambda content: calls.append(parsers[1]) or content + b"B",
+    )
+
+    profile = ConfigManager().get_profile("ordered-parsers")
+    assert MCRU(profile)._hash_file(source_file) == hashlib.md5(b"contentAB").hexdigest()
+    assert calls == parsers
 
 
 @pytest.fixture

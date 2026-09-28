@@ -14,7 +14,6 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Static, Input
 from textual.binding import Binding
 from config import (
-    BUNDLED_MAPPING_FILE,
     CONFIG_DIR,
     CONFIG_FILE,
     DEFAULT_MAPPING_FILE,
@@ -23,6 +22,7 @@ from config import (
     SUITES_FILE,
     ConfigManager,
     GlobalConfig,
+    read_bundled_mapping_presets,
 )
 from backup import BACKUPS_DIR, BACKUPS_REGISTRY
 
@@ -451,7 +451,7 @@ class ConfigScreen(Screen):
         staged_path = None
         status_message = "Mapping presets reset."
         try:
-            payload = BUNDLED_MAPPING_FILE.read_text(encoding="utf-8")
+            payload = read_bundled_mapping_presets()
             json.loads(payload)
             DEFAULT_MAPPING_FILE.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=DEFAULT_MAPPING_FILE.parent, delete=False) as staged:
@@ -480,7 +480,7 @@ class ConfigScreen(Screen):
         previous_dir = None
         status_message = "All mcru configuration reset."
         try:
-            mapping_text = BUNDLED_MAPPING_FILE.read_text(encoding="utf-8")
+            mapping_text = read_bundled_mapping_presets()
             json.loads(mapping_text)
             CONFIG_DIR.parent.mkdir(parents=True, exist_ok=True)
             staged_dir = Path(tempfile.mkdtemp(prefix=f"{CONFIG_DIR.name}-reset-", dir=CONFIG_DIR.parent))

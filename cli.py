@@ -31,10 +31,20 @@ import subprocess
 import sys
 import shutil
 from pathlib import Path
-from config import ConfigManager, ReportManager, CONFIG_DIR, CONFIG_FILE, SUITES_FILE, DEFAULT_MAPPING_FILE, BUNDLED_MAPPING_FILE, GlobalConfig
+from config import (
+    ConfigManager,
+    ReportManager,
+    CONFIG_DIR,
+    CONFIG_FILE,
+    SUITES_FILE,
+    DEFAULT_MAPPING_FILE,
+    GlobalConfig,
+    read_bundled_mapping_presets,
+)
 from syncer import MCRU
 from backup import BackupManager, BACKUPS_DIR
 from reporter import Reporter, SuiteReporter, TargetChangelogWriter, ProfileListFormatter, REPORTS_DIR
+from registry import list_parsers
 
 
 SNAPSHOT_EXCLUDED_NAMES = {
@@ -261,15 +271,13 @@ def config_reset_presets():
     """Reset mapping presets to package defaults.\n
     Deletes ~/.mcru/mapping-presets.json and re-seeds it from the bundled defaults.
     """
+    payload = read_bundled_mapping_presets()
     if DEFAULT_MAPPING_FILE.exists():
         DEFAULT_MAPPING_FILE.unlink()
         click.echo(f"🗑️  Deleted: {DEFAULT_MAPPING_FILE}")
-    
-    if BUNDLED_MAPPING_FILE.exists():
-        shutil.copy2(BUNDLED_MAPPING_FILE, DEFAULT_MAPPING_FILE)
-        click.echo(f"✅  Re-seeded: {DEFAULT_MAPPING_FILE}")
-    else:
-        click.echo(f"⚠️  Bundled mapping file not found: {BUNDLED_MAPPING_FILE}")
+    DEFAULT_MAPPING_FILE.parent.mkdir(parents=True, exist_ok=True)
+    DEFAULT_MAPPING_FILE.write_text(payload, encoding="utf-8")
+    click.echo(f"✅  Re-seeded: {DEFAULT_MAPPING_FILE}")
 
 
 @config.command("reset")
@@ -280,6 +288,8 @@ def config_reset():
     if not click.confirm("⚠️  This will delete all ~/.mcru/ data (profiles, presets, reports). Continue?"):
         click.echo("Cancelled.")
         return
+
+    mapping_payload = read_bundled_mapping_presets()
     
     if CONFIG_DIR.exists():
         shutil.rmtree(CONFIG_DIR)
@@ -292,9 +302,8 @@ def config_reset():
     SUITES_FILE.write_text(json.dumps({"suites": []}, indent=2))
     click.echo(f"✅  Created fresh: {SUITES_FILE}")
 
-    if BUNDLED_MAPPING_FILE.exists():
-        shutil.copy2(BUNDLED_MAPPING_FILE, DEFAULT_MAPPING_FILE)
-        click.echo(f"✅  Seeded: {DEFAULT_MAPPING_FILE}")
+    DEFAULT_MAPPING_FILE.write_text(mapping_payload, encoding="utf-8")
+    click.echo(f"✅  Seeded: {DEFAULT_MAPPING_FILE}")
 
     click.echo("✅  Config reset complete.")
 
@@ -558,7 +567,7 @@ def profile():
 @click.argument("source")
 @click.argument("target")
 @click.option("--parser", "-p", multiple=True,
-              type=click.Choice(["strip_bom", "normalize_line_endings", "lowercase_names"]),
+              type=click.Choice(list_parsers()),
               help="Apply one or more parsers to source files before comparing.")
 @click.option("--description", "-d", default="", help="Optional description for this profile.")
 @click.option("--mapping", default=None, help="Optional mapping preset name (from mapping-presets.json).")
@@ -692,7 +701,7 @@ def profile_remove(name):
 @click.argument("source")
 @click.argument("target")
 @click.option("--parser", "-p", multiple=True,
-              type=click.Choice(["strip_bom", "normalize_line_endings", "lowercase_names"]))
+              type=click.Choice(list_parsers()))
 @click.option("--description", "-d", default="")
 @click.option("--mapping", default=None, help="Optional mapping preset name (from mapping-presets.json).")
 @click.option("--target-changelog", is_flag=True, default=False,
@@ -713,7 +722,7 @@ def profile_update(name, source, target, parser, description, mapping, target_ch
 @click.option("--target-changelog", type=click.Choice(["on", "off"]), default=None,
               help="Enable or disable target changelog.")
 @click.option("--parser", "-p", multiple=True,
-              type=click.Choice(["strip_bom", "normalize_line_endings", "lowercase_names"]),
+              type=click.Choice(list_parsers()),
               help="Set parser list (replaces existing parsers).")
 @click.option("--source", default=None, help="Update source folder path.")
 @click.option("--target", default=None, help="Update target folder path.")
@@ -1377,7 +1386,7 @@ def suite_reorder(suite_name, profile_name, position):
 @click.argument("target")
 @click.option("--dry-run", is_flag=True)
 @click.option("--parser", "-p", multiple=True,
-              type=click.Choice(["strip_bom", "normalize_line_endings", "lowercase_names"]))
+              type=click.Choice(list_parsers()))
 @click.option("--mapping", default=None, help="Optional mapping preset name.")
 def quick(source, target, dry_run, parser, mapping):
     """Quick one-off compare without saving a profile.\n

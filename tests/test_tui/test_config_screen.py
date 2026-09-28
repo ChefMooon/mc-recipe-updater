@@ -143,7 +143,11 @@ def _patch_config_files(monkeypatch, tmp_path):
         monkeypatch.setattr(module, "SUITES_FILE", suites)
         monkeypatch.setattr(module, "GLOBAL_CONFIG_FILE", global_settings)
         monkeypatch.setattr(module, "DEFAULT_MAPPING_FILE", mapping)
-        monkeypatch.setattr(module, "BUNDLED_MAPPING_FILE", bundled)
+        monkeypatch.setattr(
+            module,
+            "read_bundled_mapping_presets",
+            lambda: bundled.read_text(encoding="utf-8"),
+        )
     return config_dir, profiles, suites, global_settings, mapping, bundled
 
 
@@ -282,3 +286,16 @@ def test_view_presets_reports_invalid_utf8(monkeypatch, tmp_path):
 
     modal, _ = app.pushed[-1]
     assert "not valid UTF-8" in modal._content
+
+
+def test_view_presets_displays_bundled_defaults_after_config_seeding(monkeypatch, tmp_path):
+    _, _, _, _, mapping, _ = _patch_config_files(monkeypatch, tmp_path)
+    screen = ConfigScreen(ConfigManager())
+    app = _FakeApp()
+    monkeypatch.setattr(ConfigScreen, "app", property(lambda _self: app))
+
+    screen.action_view_presets()
+
+    modal, _ = app.pushed[-1]
+    assert json.loads(mapping.read_text(encoding="utf-8")) == {"presets": {}}
+    assert json.loads(modal._content) == {"presets": {}}

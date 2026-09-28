@@ -7,7 +7,7 @@ Add your own by following the same pattern and registering it here.
 Built-in parsers:
   - strip_bom              Remove UTF-8 BOM if present
   - normalize_line_endings Convert all line endings to LF (\n)
-  - lowercase_names        Not a content parser — handled in syncer
+  - strip_trailing_whitespace Remove trailing whitespace from lines
 """
 
 # ──────────────────────────────────────────────

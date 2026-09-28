@@ -29,8 +29,8 @@ Each suite looks like:
 import json
 import os
 import re
-import shutil
 import copy
+from importlib import resources
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -39,9 +39,13 @@ CONFIG_DIR = Path.home() / ".mcru"
 CONFIG_FILE = CONFIG_DIR / "profiles.json"
 SUITES_FILE = CONFIG_DIR / "suites.json"
 GLOBAL_CONFIG_FILE = CONFIG_DIR / "config.json"
-BUNDLED_MAPPING_FILE = Path(__file__).resolve().parent / "mapping-presets.json"
 DEFAULT_MAPPING_FILE = CONFIG_DIR / "mapping-presets.json"
 REPORTS_DIR = CONFIG_DIR / "reports"
+
+
+def read_bundled_mapping_presets() -> str:
+    resource = resources.files("mcru_resources").joinpath("mapping-presets.json")
+    return resource.read_text(encoding="utf-8")
 
 
 class ConfigManager:
@@ -72,8 +76,8 @@ class ConfigManager:
             CONFIG_FILE.write_text(json.dumps({"profiles": []}, indent=2), encoding="utf-8")
         if not SUITES_FILE.exists():
             SUITES_FILE.write_text(json.dumps({"suites": []}, indent=2), encoding="utf-8")
-        if not DEFAULT_MAPPING_FILE.exists() and BUNDLED_MAPPING_FILE.exists():
-            shutil.copy2(BUNDLED_MAPPING_FILE, DEFAULT_MAPPING_FILE)
+        if not DEFAULT_MAPPING_FILE.exists():
+            DEFAULT_MAPPING_FILE.write_text(read_bundled_mapping_presets(), encoding="utf-8")
 
     def _load(self):
         data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))

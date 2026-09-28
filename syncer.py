@@ -20,7 +20,7 @@ import tempfile
 from threading import Event
 from typing import Callable
 from pathlib import Path
-from registry import get_parser
+from registry import get_parser, list_parsers
 
 
 class SyncCancelled(Exception):
@@ -249,6 +249,13 @@ class MCRU:
             Path(config["target"]),
         )
         self.parsers = config.get("parsers", [])
+        unknown_parsers = [name for name in self.parsers if get_parser(name) is None]
+        if unknown_parsers:
+            available = ", ".join(list_parsers())
+            unknown = ", ".join(repr(name) for name in unknown_parsers)
+            raise ValueError(
+                f"Unknown parser(s): {unknown}. Available parsers: {available}."
+            )
         self.mapping = config.get("mapping")
         self.dry_run = dry_run
         self.progress_callback = progress_callback or (lambda current, total, operation: None)

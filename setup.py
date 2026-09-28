@@ -5,6 +5,7 @@ setup(
     version="2.0.0",
     py_modules=["cli", "config", "registry", "reporter", "syncer", "backup"],
     packages=find_packages(),
+    package_data={"mcru_resources": ["mapping-presets.json"]},
     install_requires=[
         "click>=8.0",
         "textual>=0.30.0",

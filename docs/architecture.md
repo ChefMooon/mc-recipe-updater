@@ -40,7 +40,7 @@ syncer.py           MCRU — the diff + sync engine.
 reporter.py         Reporter / SuiteReporter — terminal output and .txt report files.
 registry.py         Parser registry — content transform functions (bytes → bytes).
 tui/                TUI layer — interactive terminal interface (new, see below).
-mapping-presets.json  Bundled default mapping presets, seeded to ~/.mcru/ on first run.
+mcru_resources/     Packaged defaults, including mapping-presets.json.
 setup.py            Package definition, entry point registration (CLI & TUI).
 ```
 
@@ -80,7 +80,9 @@ Responsible for all read/write access to the `~/.mcru/` directory.
 1. Creates `~/.mcru/` if it does not exist.
 2. Creates `profiles.json` with an empty `{"profiles": []}` stub if missing.
 3. Creates `suites.json` with an empty `{"suites": []}` stub if missing.
-4. Copies `mapping-presets.json` from the package bundle into `~/.mcru/` if the user copy does not yet exist.
+4. Reads `mcru_resources/mapping-presets.json` through `importlib.resources`
+   and seeds `~/.mcru/mapping-presets.json` only if the user copy does not yet
+   exist.
 
 **Key constants:**
 
@@ -90,7 +92,10 @@ Responsible for all read/write access to the `~/.mcru/` directory.
 | `CONFIG_FILE`          | `~/.mcru/profiles.json`              |
 | `SUITES_FILE`          | `~/.mcru/suites.json`                |
 | `DEFAULT_MAPPING_FILE` | `~/.mcru/mapping-presets.json`       |
-| `BUNDLED_MAPPING_FILE` | `<package_dir>/mapping-presets.json` |
+
+`read_bundled_mapping_presets()` reads the package resource through
+`importlib.resources`, so it works from installed distributions as well as the
+source checkout.
 
 **Profile schema:**
 
@@ -260,7 +265,9 @@ They are applied in order in `MCRU._hash_file()` before the MD5 is computed.
 | `normalize_line_endings`    | `normalize_line_endings(content)`    | Converts `\r\n` and `\r` to `\n`                              |
 | `strip_trailing_whitespace` | `strip_trailing_whitespace(content)` | Strips trailing whitespace from each line                     |
 
-> Note: `lowercase_names` is shown as a parser option in CLI help text but is not currently implemented in the registry — it is listed for future use.
+The repeatable CLI parser options are derived from the registry. Unknown parser
+names in saved profiles are rejected before syncing, with the supported names
+listed in the validation error.
 
 **Adding a custom parser:**
 
@@ -405,7 +412,8 @@ All user data lives under `~/.mcru/`, created automatically on first use.
 ```
 
 **Seeding behaviour:**  
-`mapping-presets.json` is copied once from the bundled package defaults.  
+`mcru_resources/mapping-presets.json` is copied once from the packaged defaults
+through `importlib.resources`.
 Subsequent installs or upgrades never overwrite the user copy.  
 To reset: `mcru config reset-presets`  
 To reset everything: `mcru config reset` (deletes all of `~/.mcru/`)
@@ -429,6 +437,10 @@ entry_points={
 
 After `pip install -e .`, the `mcru` command is available globally.  
 Editable install means source changes take effect immediately without reinstalling.
+
+The setuptools package data includes `mcru_resources/mapping-presets.json` in
+both wheel and source distributions. Application modules and console-script
+entry points remain flat and unchanged.
 
 **Standalone binary (optional):**
 ```bash
@@ -457,7 +469,7 @@ pyinstaller --onefile cli.py --name mcru
 | `mcru quick <src> <tgt> [opts]`         | One-off run without saving a profile |
 
 **`add` / `update` options:**
-- `-p / --parser` — parser name (repeatable): `strip_bom`, `normalize_line_endings`, `lowercase_names`
+- `-p / --parser` — parser name (repeatable): `strip_bom`, `normalize_line_endings`, `strip_trailing_whitespace`
 - `-d / --desc` — description
 - `--mapping` — mapping preset name
 
@@ -536,6 +548,7 @@ See [folder-mapping.md](folder-mapping.md) for the full mapping documentation.
 | Source missing or not a directory   | Validation error raised before any sync begins                 |
 | Existing target is not a directory  | Validation error raised before any sync begins                 |
 | Resolved roots are identical/overlap | `ValueError` raised before any sync begins                     |
+| Unknown parser name in a profile     | Validation error raised before any sync begins                |
 | Mapping preset not found            | Error printed, command exits cleanly                           |
 | Forge + neoforge both present       | Error if `forge_like_conflict: error_if_multiple`              |
 | Two source files map to same target | `ValueError` raised with both conflicting paths named          |
