@@ -1,9 +1,4 @@
-"""
-Home screen with ASCII art animation and command menu.
-
-The entry point for the TUI, featuring animated title art and 
-a navigable list of available commands.
-"""
+"""Home screen with ASCII art and a command menu."""
 
 from pathlib import Path
 from typing import Optional
@@ -26,7 +21,10 @@ except (FileNotFoundError, Exception):
 
 # Version and help text
 VERSION = "2.0.0"
-SUBTITLE = "Tab to autocomplete, ↑↓ for history, Ctrl+C to quit"
+SUBTITLE = (
+    "Enter a command or use Alt+P/S/R/H/B/C/Q for quick access\n"
+    "↑/↓: browse commands  Ctrl+C: quit"
+)
 
 COMMANDS = [
     ("profile", "Manage sync profiles"),
@@ -38,8 +36,49 @@ COMMANDS = [
 ]
 
 
+class HomeCommandInput(Input):
+    """Command entry with quick-access chords that preserve ordinary typing."""
+
+    BINDINGS = [
+        Binding("alt+p", "route_profile", "Profile", show=False),
+        Binding("alt+s", "route_suite", "Suite", show=False),
+        Binding("alt+r", "route_run", "Run", show=False),
+        Binding("alt+h", "route_reports", "Reports", show=False),
+        Binding("alt+b", "route_backups", "Backups", show=False),
+        Binding("alt+c", "route_config", "Config", show=False),
+        Binding("alt+q", "force_quit", "Quit", show=False),
+        Binding("ctrl+c", "force_quit", "Quit", show=False),
+    ]
+
+    def _route(self, command: str) -> None:
+        handler = getattr(self.screen, "_handle_command", None)
+        if handler:
+            handler(command)
+
+    def action_route_profile(self) -> None:
+        self._route("profile")
+
+    def action_route_suite(self) -> None:
+        self._route("suite")
+
+    def action_route_run(self) -> None:
+        self._route("run")
+
+    def action_route_reports(self) -> None:
+        self._route("reports")
+
+    def action_route_backups(self) -> None:
+        self._route("backups")
+
+    def action_route_config(self) -> None:
+        self._route("config")
+
+    def action_force_quit(self) -> None:
+        self.app.exit()
+
+
 class SplashArt(Static):
-    """Animated splash art display loaded from .asciimtn file."""
+    """Static splash art loaded from the first frame in the .asciimtn file."""
 
     DEFAULT_CSS = """
     SplashArt {
@@ -141,19 +180,14 @@ class HomeScreen(Screen):
         Binding("up", "select_up", "Up", show=False),
         Binding("down", "select_down", "Down", show=False),
         Binding("enter", "select_command", "Select", show=False),
-        Binding("tab", "autocomplete", "Autocomplete", show=False),
-        Binding("ctrl+c", "force_quit", "Force Quit", show=False),
+        Binding("tab", "autocomplete", "Autocomplete", show=False, priority=True),
+        Binding("ctrl+c", "force_quit", "Force Quit", show=False, priority=True),
         ("q", "quit", "Quit"),
     ]
 
     def action_force_quit(self) -> None:
         """Immediately exit the app on Ctrl+C."""
         self.app.exit()
-
-    async def on_key(self, event) -> None:
-        # Ensure KeyboardInterrupt (Ctrl+C) always exits immediately
-        if hasattr(event, 'key') and event.key == "ctrl+c":
-            self.app.exit()
 
     DEFAULT_CSS = """
     HomeScreen {
@@ -175,6 +209,13 @@ class HomeScreen(Screen):
     #subtitle {
         width: 1fr;
         height: auto;
+        color: $text-muted;
+        padding: 0 1;
+    }
+
+    #home-status {
+        width: 1fr;
+        height: 1;
         color: $text-muted;
         padding: 0 1;
     }
@@ -215,11 +256,13 @@ class HomeScreen(Screen):
             yield subtitle_widget
             
             # Command input
-            self.command_input = Input(
-                placeholder="> Enter command (profile|suite|run|reports|config)",
+            self.command_input = HomeCommandInput(
+                placeholder="Enter command: profile|suite|run|reports|backups|config|quit",
                 id="command-input"
             )
             yield self.command_input
+
+            yield Static("", id="home-status")
             
             # Command list
             self.command_list = CommandList()
@@ -245,8 +288,8 @@ class HomeScreen(Screen):
         else:
             return
         
-        if command:
-            self._handle_command(command)
+        if command and self._handle_command(command) and self.command_input:
+            self.command_input.value = ""
 
     def action_autocomplete(self) -> None:
         """Autocomplete command from input."""
@@ -292,16 +335,11 @@ class HomeScreen(Screen):
         """Navigate to backups screen."""
         self._handle_command("backups")
 
-    def _handle_command(self, command: str) -> None:
-        """Route command to appropriate screen."""
+    def _handle_command(self, command: str) -> bool:
+        """Route a recognized command and report whether it was handled."""
         command = command.strip().lower()
         app = self.app
-        
-        # Add to history
-        if command and command not in ("q", "quit", "exit"):
-            if command not in self.command_history:
-                self.command_history.append(command)
-        
+
         if command == "profile":
             app.push_profile_screen()
         elif command == "suite":
@@ -316,11 +354,15 @@ class HomeScreen(Screen):
             app.push_config_screen()
         elif command in ("q", "quit", "exit"):
             app.exit()
+        else:
+            self._set_status(f"Unknown command: {command}")
+            return False
+        return True
+
+    def _set_status(self, message: str) -> None:
+        self.query_one("#home-status", Static).update(message)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle input submission when user presses Enter."""
         if event.input.id == "command-input":
             self.action_select_command()
-            # Clear input after command
-            if self.command_input:
-                self.command_input.value = ""

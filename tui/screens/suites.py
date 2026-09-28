@@ -14,7 +14,10 @@ from config import ConfigManager
 class SuiteFormModal(ModalScreen[dict | None]):
     """Modal form for creating or editing a suite."""
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=False),
+        Binding("ctrl+c", "force_quit", "Quit", show=False, priority=True),
+    ]
 
     DEFAULT_CSS = """
     SuiteFormModal {
@@ -102,11 +105,17 @@ class SuiteFormModal(ModalScreen[dict | None]):
     def action_cancel(self) -> None:
         self.dismiss(None)
 
+    def action_force_quit(self) -> None:
+        self.app.exit()
+
 
 class ConfirmModal(ModalScreen[bool]):
     """Small y/n confirmation modal."""
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=False),
+        Binding("ctrl+c", "force_quit", "Quit", show=False, priority=True),
+    ]
 
     DEFAULT_CSS = """
     ConfirmModal {
@@ -170,6 +179,9 @@ class ConfirmModal(ModalScreen[bool]):
 
     def action_cancel(self) -> None:
         self.dismiss(False)
+
+    def action_force_quit(self) -> None:
+        self.app.exit()
 
 
 class SuiteListItem(ListItem):
@@ -512,20 +524,33 @@ class ManageProfilesScreen(Screen):
         available = [p["name"] for p in self.config_manager.list_profiles() if p["name"] not in in_suite]
         return AvailablePanel(available)
 
-    def _refresh(self) -> None:
+    def _refresh(self, selected_profile: str | None = None, active_panel: str | None = None) -> None:
+        selected_in = selected_profile or self._selected_from(self._in_panel.listview if self._in_panel else None)
+        selected_available = self._selected_from(self._available_panel.listview if self._available_panel else None)
+        requested_panel = active_panel or self._active_panel
+        remove_pending = []
         if self._in_panel:
-            self._in_panel.remove()
+            remove_pending.append(self._in_panel.remove())
             self._in_panel = None
         if self._available_panel:
-            self._available_panel.remove()
+            remove_pending.append(self._available_panel.remove())
             self._available_panel = None
         row = self.query_one("#manage-row", Horizontal)
         self._in_panel = self._build_in_panel()
         self._available_panel = self._build_available_panel()
-        row.mount(self._in_panel)
-        row.mount(self._available_panel)
-        self._sync_active_panel_classes()
-        self._focus_active_list()
+
+        async def mount_panels() -> None:
+            for pending in remove_pending:
+                await pending
+            await row.mount(self._in_panel)
+            await row.mount(self._available_panel)
+            if selected_in in self._in_panel.profile_names and self._in_panel.listview:
+                self._in_panel.listview.index = self._in_panel.profile_names.index(selected_in)
+            if selected_available in self._available_panel.profile_names and self._available_panel.listview:
+                self._available_panel.listview.index = self._available_panel.profile_names.index(selected_available)
+            self._focus_panel(requested_panel, report_failure=False)
+
+        self.call_after_refresh(mount_panels)
 
     def _sync_active_panel_classes(self) -> None:
         panels: list[tuple[Container, str]] = []
@@ -538,15 +563,32 @@ class ManageProfilesScreen(Screen):
             if self._active_panel == active_name:
                 panel.add_class("manage-panel-active")
 
-    def _focus_active_list(self) -> None:
-        self._sync_active_panel_classes()
-        listview = self._current_listview()
+    def _focus_active_list(self) -> bool:
+        return self._focus_panel(self._active_panel)
+
+    def _focus_panel(self, panel_name: str, report_failure: bool = True) -> bool:
+        panel = self._in_panel if panel_name == "in" else self._available_panel
+        listview = panel.listview if panel else None
         if listview is None:
-            return
+            if report_failure:
+                label = "In-suite" if panel_name == "in" else "Available"
+                self._set_status(f"{label} list is not focusable right now.")
+            return False
         try:
             listview.focus()
         except Exception:
-            pass
+            if report_failure:
+                label = "In-suite" if panel_name == "in" else "Available"
+                self._set_status(f"{label} list is not focusable right now.")
+            return False
+        if self.focused is not listview:
+            if report_failure:
+                label = "In-suite" if panel_name == "in" else "Available"
+                self._set_status(f"{label} list is not focusable right now.")
+            return False
+        self._active_panel = panel_name
+        self._sync_active_panel_classes()
+        return True
 
     def _current_listview(self) -> ListView | None:
         if self._active_panel == "in":
@@ -566,8 +608,8 @@ class ManageProfilesScreen(Screen):
             self._status_bar.update(message)
 
     def action_toggle_panel(self) -> None:
-        self._active_panel = "available" if self._active_panel == "in" else "in"
-        self._focus_active_list()
+        target_panel = "available" if self._active_panel == "in" else "in"
+        self._focus_panel(target_panel)
 
     def action_add_profile(self) -> None:
         profile_name = self._selected_from(self._available_panel.listview if self._available_panel else None)
@@ -577,9 +619,8 @@ class ManageProfilesScreen(Screen):
         try:
             self.config_manager.add_profile_to_suite(self.suite_name, profile_name)
             self._set_status(f"Added profile '{profile_name}'.")
-            self._active_panel = "in"
-            self._refresh()
-        except ValueError as err:
+            self._refresh(selected_profile=profile_name, active_panel="in")
+        except (OSError, ValueError) as err:
             self._set_status(str(err))
 
     def action_remove_profile(self) -> None:
@@ -591,7 +632,7 @@ class ManageProfilesScreen(Screen):
             self.config_manager.remove_profile_from_suite(self.suite_name, profile_name)
             self._set_status(f"Removed profile '{profile_name}'.")
             self._refresh()
-        except ValueError as err:
+        except (OSError, ValueError) as err:
             self._set_status(str(err))
 
     def action_move_up(self) -> None:
@@ -618,9 +659,13 @@ class ManageProfilesScreen(Screen):
         if target == current:
             self._set_status("Profile is already at the edge of the order.")
             return
-        self.config_manager.reorder_profile_in_suite(self.suite_name, profile_name, target + 1)
+        try:
+            self.config_manager.reorder_profile_in_suite(self.suite_name, profile_name, target + 1)
+        except (OSError, ValueError) as err:
+            self._set_status(f"Could not reorder '{profile_name}': {err}")
+            return
         self._set_status(f"Moved '{profile_name}' to position {target + 1}.")
-        self._refresh()
+        self._refresh(selected_profile=profile_name)
 
     def action_force_quit(self) -> None:
         """Immediately exit the app on Ctrl+C."""
@@ -634,28 +679,10 @@ class ManageProfilesScreen(Screen):
             return False
 
     def action_focus_section_1(self) -> None:
-        self._active_panel = "in"
-        self._sync_active_panel_classes()
-        listview = self._in_panel.listview if self._in_panel else None
-        if listview is None:
-            self._set_status("In-suite list is not focusable right now.")
-            return
-        try:
-            listview.focus()
-        except Exception:
-            self._set_status("In-suite list is not focusable right now.")
+        self._focus_panel("in")
 
     def action_focus_section_2(self) -> None:
-        self._active_panel = "available"
-        self._sync_active_panel_classes()
-        listview = self._available_panel.listview if self._available_panel else None
-        if listview is None:
-            self._set_status("Available list is not focusable right now.")
-            return
-        try:
-            listview.focus()
-        except Exception:
-            self._set_status("Available list is not focusable right now.")
+        self._focus_panel("available")
 
     def action_focus_section_3(self) -> None:
         self._set_status("Actions section is not focusable.")
@@ -710,6 +737,7 @@ class SuitesScreen(Screen):
         self._detail_panel: SuiteDetail | None = None
         self._status_bar: Static | None = None
         self._pending_delete_name: str | None = None
+        self._refresh_on_resume = False
 
     def compose(self):
         self._suites = self.config_manager.list_suites()
@@ -734,7 +762,9 @@ class SuitesScreen(Screen):
         self.call_after_refresh(self._ensure_initial_focus)
 
     def on_screen_resume(self) -> None:
-        self._refresh_list()
+        if self._refresh_on_resume:
+            self._refresh_on_resume = False
+            self._refresh_list()
 
     def _ensure_initial_focus(self) -> None:
         if self._focus_widget("#suite-listview", ListView):
@@ -775,19 +805,30 @@ class SuitesScreen(Screen):
         if self._status_bar:
             self._status_bar.update(message)
 
-    def _refresh_list(self) -> None:
+    def _refresh_list(self, selected_name: str | None = None) -> None:
+        selected_name = selected_name or self._get_selected_suite_name()
         self._suites = self.config_manager.list_suites()
-        if self._suite_list:
-            self._suite_list.remove()
+        remove_pending = self._suite_list.remove() if self._suite_list else None
         panels_row = self.query_one("#panels-row", Horizontal)
         new_list = SuiteList(self._suites)
-        panels_row.mount(new_list, before=self._detail_panel)
         self._suite_list = new_list
-        if self._suites:
-            self._show_suite(0)
-        elif self._detail_panel:
-            self._detail_panel.update_detail(None)
-        self.call_after_refresh(self._ensure_initial_focus)
+
+        async def mount_new_list() -> None:
+            if remove_pending:
+                await remove_pending
+            await panels_row.mount(new_list, before=self._detail_panel)
+            if self._suites:
+                index = next(
+                    (i for i, suite in enumerate(self._suites) if suite["name"] == selected_name),
+                    0,
+                )
+                self.query_one("#suite-listview", ListView).index = index
+                self._show_suite(index)
+            elif self._detail_panel:
+                self._detail_panel.update_detail(None)
+            self._ensure_initial_focus()
+
+        self.call_after_refresh(mount_new_list)
 
     def action_add_suite(self) -> None:
         self.app.push_screen(SuiteFormModal(), callback=self._on_add_suite)
@@ -799,9 +840,12 @@ class SuitesScreen(Screen):
         if self.config_manager.get_suite(result["name"]):
             self._set_status(f"Suite '{result['name']}' already exists.")
             return
-        self.config_manager.save_suite(result["name"], description=result["description"])
-        self._refresh_list()
-        self._set_status(f"Suite '{result['name']}' added.")
+        try:
+            self.config_manager.save_suite(result["name"], description=result["description"])
+            self._refresh_list(result["name"])
+            self._set_status(f"Suite '{result['name']}' added.")
+        except (OSError, ValueError) as err:
+            self._set_status(f"Could not add suite '{result['name']}': {err}")
 
     def action_edit_suite(self) -> None:
         suite_name = self._get_selected_suite_name()
@@ -809,6 +853,9 @@ class SuitesScreen(Screen):
             self._set_status("No suite selected.")
             return
         suite = self.config_manager.get_suite(suite_name)
+        if not suite:
+            self._set_status(f"Suite '{suite_name}' no longer exists.")
+            return
         self.app.push_screen(SuiteFormModal(suite), callback=self._on_edit_suite)
 
     def _on_edit_suite(self, result: dict | None) -> None:
@@ -821,12 +868,18 @@ class SuitesScreen(Screen):
             self._set_status(f"Suite '{new_name}' already exists.")
             return
         original = self.config_manager.get_suite(original_name) if original_name else None
+        if original_name and original is None:
+            self._set_status(f"Suite '{original_name}' no longer exists.")
+            return
         profiles = original.get("profiles", []) if original else []
-        if original_name and original_name != new_name:
-            self.config_manager.delete_suite(original_name)
-        self.config_manager.save_suite(new_name, description=result["description"], profiles=profiles)
-        self._refresh_list()
-        self._set_status(f"Suite '{new_name}' saved.")
+        try:
+            self.config_manager.save_suite(new_name, description=result["description"], profiles=profiles)
+            if original_name and original_name != new_name:
+                self.config_manager.delete_suite(original_name)
+            self._refresh_list(new_name)
+            self._set_status(f"Suite '{new_name}' saved.")
+        except (OSError, ValueError) as err:
+            self._set_status(f"Could not save suite '{new_name}': {err}")
 
     def action_delete_suite(self) -> None:
         suite_name = self._get_selected_suite_name()
@@ -849,14 +902,15 @@ class SuitesScreen(Screen):
             self.config_manager.delete_suite(suite_name)
             self._refresh_list()
             self._set_status(f"Suite '{suite_name}' deleted.")
-        except ValueError as err:
-            self._set_status(str(err))
+        except (OSError, ValueError) as err:
+            self._set_status(f"Could not delete suite '{suite_name}': {err}")
 
     def action_manage_profiles(self) -> None:
         suite_name = self._get_selected_suite_name()
         if not suite_name:
             self._set_status("No suite selected.")
             return
+        self._refresh_on_resume = True
         self.app.push_screen(ManageProfilesScreen(self.config_manager, suite_name))
 
     def action_force_quit(self) -> None:

@@ -16,6 +16,13 @@ from datetime import datetime
 from pathlib import Path
 
 REPORTS_DIR = Path.home() / ".mcru" / "reports"
+REPORT_OUTCOMES = {"success", "partial", "failed", "cancelled"}
+
+
+def _validate_report_outcome(outcome: str) -> str:
+    if outcome not in REPORT_OUTCOMES:
+        raise ValueError(f"Invalid report outcome: {outcome}")
+    return outcome
 
 
 # ──────────────────────────────────────────────────────────────
@@ -205,11 +212,12 @@ class ProfileListFormatter:
 
 
 class Reporter:
-    def __init__(self, profile_name: str, config: dict, results: dict, dry_run: bool = False):
+    def __init__(self, profile_name: str, config: dict, results: dict, dry_run: bool = False, outcome: str = "success"):
         self.profile_name = profile_name
         self.config = config
         self.results = results
         self.dry_run = dry_run
+        self.outcome = _validate_report_outcome(outcome)
         self.timestamp = datetime.now()
 
     def print_summary(self):
@@ -285,6 +293,7 @@ class Reporter:
             f"Profile  : {self.profile_name}",
             f"Date     : {self.timestamp.isoformat(timespec='seconds')}",
             f"Mode     : {'DRY RUN' if self.dry_run else 'LIVE'}",
+            f"Outcome  : {self.outcome}",
             f"Source   : {self.config['source']}",
             f"Target   : {self.config['target']}",
             f"Parsers  : {', '.join(self.config.get('parsers', [])) or 'none'}",
@@ -310,8 +319,9 @@ class Reporter:
             *fmt([d + "/" for d in r.get("dirs_removed", [])], "-"),
             "",
         ]
+        lines += [f"Errors ({len(r['errors'])}):"]
         if r["errors"]:
-            lines += [f"Errors ({len(r['errors'])}):", *[f"  ! {f}: {e}" for f, e in r["errors"]], ""]
+            lines += [*[f"  ! {f}: {e}" for f, e in r["errors"]], ""]
 
         filepath.write_text("\n".join(lines), encoding="utf-8")
         return str(filepath)
@@ -335,10 +345,11 @@ class SuiteReporter:
         Whether the run was in dry-run mode.
     """
 
-    def __init__(self, suite_name: str, runs: list, dry_run: bool = False):
+    def __init__(self, suite_name: str, runs: list, dry_run: bool = False, outcome: str = "success"):
         self.suite_name = suite_name
         self.runs = runs
         self.dry_run = dry_run
+        self.outcome = _validate_report_outcome(outcome)
         self.timestamp = datetime.now()
 
     # ── Internal helpers ─────────────────────────────────────
@@ -459,6 +470,7 @@ class SuiteReporter:
             f"Suite    : {self.suite_name}",
             f"Date     : {self.timestamp.isoformat(timespec='seconds')}",
             f"Mode     : {'DRY RUN' if self.dry_run else 'LIVE'}",
+            f"Outcome  : {self.outcome}",
             f"Profiles : {len(self.runs)}",
             "=" * 60,
             "",

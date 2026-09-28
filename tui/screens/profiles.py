@@ -35,6 +35,7 @@ class AddProfileModal(ModalScreen[dict | None]):
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel", show=False),
+        Binding("ctrl+c", "force_quit", "Quit", show=False, priority=True),
     ]
 
     DEFAULT_CSS = """
@@ -101,9 +102,10 @@ class AddProfileModal(ModalScreen[dict | None]):
     }
     """
 
-    def __init__(self, profile: dict | None = None):
+    def __init__(self, profile: dict | None = None, existing_names: list[str] | None = None):
         super().__init__()
         self._edit_profile = profile
+        self._existing_names = set(existing_names or [])
         self._parser_names = list_parsers()
         self._preset_names = _available_mapping_presets()
 
@@ -185,6 +187,11 @@ class AddProfileModal(ModalScreen[dict | None]):
             error_widget.update("[bold red]Name is required[/bold red]")
             self.query_one("#input-name", Input).focus()
             return
+        original_name = self._edit_profile["name"] if self._edit_profile else None
+        if name in self._existing_names and name != original_name:
+            error_widget.update(f"[bold red]Profile '{name}' already exists[/bold red]")
+            self.query_one("#input-name", Input).focus()
+            return
         if not source:
             error_widget.update("[bold red]Source path is required[/bold red]")
             self.query_one("#input-source", Input).focus()
@@ -222,6 +229,9 @@ class AddProfileModal(ModalScreen[dict | None]):
     def action_cancel(self) -> None:
         self.dismiss(None)
 
+    def action_force_quit(self) -> None:
+        self.app.exit()
+
 
 # ── Delete Confirm Modal ────────────────────────
 
@@ -230,6 +240,7 @@ class DeleteConfirmModal(ModalScreen[bool]):
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel", show=False),
+        Binding("ctrl+c", "force_quit", "Quit", show=False, priority=True),
     ]
 
     DEFAULT_CSS = """
@@ -299,6 +310,9 @@ class DeleteConfirmModal(ModalScreen[bool]):
 
     def action_cancel(self) -> None:
         self.dismiss(False)
+
+    def action_force_quit(self) -> None:
+        self.app.exit()
 
 
 # ── Profile List Widgets ─────────────────────────
@@ -611,23 +625,38 @@ class ProfilesScreen(Screen):
         if self._status_bar:
             self._status_bar.update(message)
 
-    def _refresh_list(self) -> None:
-        """Reload profiles and rebuild the list panel."""
+    def _refresh_list(self, selected_name: str | None = None) -> None:
+        """Reload profiles and mount a replacement list after the old one is removed."""
         self._original_profiles = self.config_manager.list_profiles()
         self._profiles = self._apply_sort(self._original_profiles)
-        if self._profile_list:
-            self._profile_list.remove()
+        remove_pending = self._profile_list.remove() if self._profile_list else None
 
         panels_row = self.query_one("#panels-row", Horizontal)
         mode_label = self._get_sort_mode_label()
         new_list = ProfileList(self._profiles, mode_label)
-        panels_row.mount(new_list, before=self._detail_panel)
         self._profile_list = new_list
 
-        if self._profiles:
-            self._show_profile(0)
-        elif self._detail_panel:
-            self._detail_panel.update_detail(None)
+        def restore_selection() -> None:
+            if self._profiles:
+                index = next(
+                    (i for i, profile in enumerate(self._profiles) if profile["name"] == selected_name),
+                    0,
+                )
+                self._show_profile(index)
+                try:
+                    self.query_one("#profile-listview", ListView).index = index
+                except Exception:
+                    pass
+            elif self._detail_panel:
+                self._detail_panel.update_detail(None)
+
+        async def mount_new_list() -> None:
+            if remove_pending:
+                await remove_pending
+            await panels_row.mount(new_list, before=self._detail_panel)
+            restore_selection()
+
+        self.call_after_refresh(mount_new_list)
 
     # ── Actions ──────────────────────────────────
 
@@ -667,7 +696,11 @@ class ProfilesScreen(Screen):
 
     def action_add_profile(self) -> None:
         """Open add profile modal."""
-        self.app.push_screen(AddProfileModal(), callback=self._on_add_profile_result)
+        existing_names = [profile["name"] for profile in self.config_manager.list_profiles()]
+        self.app.push_screen(
+            AddProfileModal(existing_names=existing_names),
+            callback=self._on_add_profile_result,
+        )
 
     def _on_add_profile_result(self, result: dict | None) -> None:
         """Handle result from add profile modal."""
@@ -691,7 +724,7 @@ class ProfilesScreen(Screen):
                 mapping_preset=result["mapping_preset"],
                 target_changelog=result["target_changelog"],
             )
-            self._refresh_list()
+            self._refresh_list(result["name"])
             self._set_status(f"[green]Profile '{result['name']}' added[/green]")
         except Exception as e:
             self._set_status(f"[bold red]Error: {e}[/bold red]")
@@ -708,7 +741,11 @@ class ProfilesScreen(Screen):
             self._set_status(f"Profile '{name}' not found")
             return
 
-        self.app.push_screen(AddProfileModal(profile=profile), callback=self._on_edit_profile_result)
+        existing_names = [item["name"] for item in self.config_manager.list_profiles()]
+        self.app.push_screen(
+            AddProfileModal(profile=profile, existing_names=existing_names),
+            callback=self._on_edit_profile_result,
+        )
 
     def _on_edit_profile_result(self, result: dict | None) -> None:
         """Handle result from edit profile modal."""
@@ -731,15 +768,7 @@ class ProfilesScreen(Screen):
             self.config_manager.update_profile_field(name, "target_changelog", result["target_changelog"])
 
             # Refresh the list to reflect changes
-            self._refresh_list()
-
-            # Re-select and display the edited profile
-            for idx, profile in enumerate(self._profiles):
-                if profile["name"] == name:
-                    listview = self.query_one("#profile-listview", ListView)
-                    listview.index = idx
-                    self._show_profile(idx)
-                    break
+            self._refresh_list(name)
 
             if name != original_name:
                 self._set_status(f"[green]Profile renamed '{original_name}' -> '{name}' and updated[/green]")
@@ -768,7 +797,7 @@ class ProfilesScreen(Screen):
             self.config_manager.remove_profile(name)
             self._refresh_list()
             self._set_status(f"[green]Deleted '{name}'[/green]")
-        except ValueError as e:
+        except (OSError, ValueError) as e:
             self._set_status(f"[bold red]Error: {e}[/bold red]")
 
     def action_verify_profile(self) -> None:

@@ -15,9 +15,11 @@ import pytest
 import json
 import tempfile
 import zipfile
+from itertools import count
 from pathlib import Path
 from datetime import datetime
-from backup import BackupManager, BackupEntry, BACKUPS_DIR, BACKUPS_REGISTRY
+import backup as backup_module
+from backup import BackupManager, BackupEntry
 
 
 @pytest.fixture
@@ -49,6 +51,14 @@ def backup_manager(monkeypatch, tmp_path):
     # Monkeypatch the backup paths
     monkeypatch.setattr("backup.BACKUPS_DIR", backup_dir)
     monkeypatch.setattr("backup.BACKUPS_REGISTRY", registry_file)
+
+    backup_id_count = count()
+    generate_backup_id = BackupManager._generate_backup_id
+
+    def generate_unique_backup_id(manager, profile_name):
+        return f"{generate_backup_id(manager, profile_name)}_{next(backup_id_count)}"
+
+    monkeypatch.setattr(BackupManager, "_generate_backup_id", generate_unique_backup_id)
     
     return BackupManager()
 
@@ -64,7 +74,7 @@ class TestBackupManagerCreateBackup:
         assert backup_id.startswith("backup_test-profile_")
         
         # Check that zip file exists
-        backup_file = BACKUPS_DIR / f"{backup_id}.zip"
+        backup_file = backup_module.BACKUPS_DIR / f"{backup_id}.zip"
         assert backup_file.exists()
         assert backup_file.suffix == ".zip"
 
@@ -72,7 +82,7 @@ class TestBackupManagerCreateBackup:
         """Backup zip should contain all files from target."""
         backup_id = backup_manager.create_backup(str(temp_target_dir), "test-profile")
         
-        backup_file = BACKUPS_DIR / f"{backup_id}.zip"
+        backup_file = backup_module.BACKUPS_DIR / f"{backup_id}.zip"
         with zipfile.ZipFile(backup_file, "r") as zf:
             names = zf.namelist()
             assert "file1.txt" in names
@@ -84,7 +94,7 @@ class TestBackupManagerCreateBackup:
         backup_id = backup_manager.create_backup(str(temp_target_dir), "test-profile")
         
         # Load registry
-        registry_content = BACKUPS_REGISTRY.read_text()
+        registry_content = backup_module.BACKUPS_REGISTRY.read_text()
         entries = json.loads(registry_content)
         
         assert len(entries) == 1
@@ -166,7 +176,7 @@ class TestBackupManagerDelete:
     def test_delete_backup_removes_file(self, backup_manager, temp_target_dir):
         """delete_backup should remove the backup file."""
         backup_id = backup_manager.create_backup(str(temp_target_dir), "test-profile")
-        backup_file = BACKUPS_DIR / f"{backup_id}.zip"
+        backup_file = backup_module.BACKUPS_DIR / f"{backup_id}.zip"
         assert backup_file.exists()
         
         # Delete
@@ -193,7 +203,7 @@ class TestBackupManagerDelete:
         result = backup_manager.delete_backup(backup_id, force=True)
         
         assert result is True
-        backup_file = BACKUPS_DIR / f"{backup_id}.zip"
+        backup_file = backup_module.BACKUPS_DIR / f"{backup_id}.zip"
         assert not backup_file.exists()
 
 
@@ -242,6 +252,28 @@ class TestBackupManagerView:
         file_names = [name for name, _ in contents]
         assert "file1.txt" in file_names
         assert "file2.txt" in file_names
+
+
+def test_prune_aborts_without_deleting_when_preview_candidates_changed(backup_manager, temp_target_dir):
+    backup_ids = [
+        backup_manager.create_backup(str(temp_target_dir), f"profile-{index}")
+        for index in range(3)
+    ]
+
+    with pytest.raises(RuntimeError, match="changed after preview"):
+        backup_manager.prune_backups(keep=1, expected_ids={backup_ids[0]})
+
+    assert {entry.id for entry in backup_manager.list_backups()} == set(backup_ids)
+
+
+def test_prune_deletes_only_the_confirmed_candidate_ids(backup_manager, temp_target_dir):
+    for index in range(3):
+        backup_manager.create_backup(str(temp_target_dir), f"profile-{index}")
+    candidates = backup_manager.list_backups()
+    expected_ids = {entry.id for entry in candidates[1:]}
+
+    assert backup_manager.prune_backups(keep=1, expected_ids=expected_ids) == len(expected_ids)
+    assert {entry.id for entry in backup_manager.list_backups()} == {candidates[0].id}
 
 
 class TestBackupCLIIntegration:

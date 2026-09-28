@@ -12,6 +12,8 @@ Tests verify:
 Reference: docs/tui-screen-standards.md
 """
 
+import asyncio
+
 import pytest
 from pathlib import Path
 from config import ConfigManager
@@ -390,3 +392,249 @@ class TestProfilesScreenIntegration:
         
         # Should update without crashing
         assert detail._content is not None
+
+
+class _MemoryProfileConfig:
+    def __init__(self, profiles=None):
+        self.profiles = [dict(profile) for profile in (profiles or [])]
+        self.failures = set()
+
+    def _fail_if_requested(self, operation):
+        if operation in self.failures:
+            raise OSError(f"{operation} failed")
+
+    def list_profiles(self):
+        return [dict(profile) for profile in self.profiles]
+
+    def get_profile(self, name):
+        for profile in self.profiles:
+            if profile["name"] == name:
+                return dict(profile)
+        return None
+
+    def add_profile(self, **values):
+        self._fail_if_requested("add_profile")
+        self.profiles.append({**values, "created_at": "2026-09-28T00:00:00", "tags": []})
+
+    def update_profile_field(self, name, field, value):
+        self._fail_if_requested("update_profile_field")
+        profile = next(profile for profile in self.profiles if profile["name"] == name)
+        profile[field] = value
+
+    def rename_profile(self, old_name, new_name):
+        self._fail_if_requested("rename_profile")
+        profile = next(profile for profile in self.profiles if profile["name"] == old_name)
+        profile["name"] = new_name
+
+    def remove_profile(self, name):
+        self._fail_if_requested("remove_profile")
+        self.profiles = [profile for profile in self.profiles if profile["name"] != name]
+
+    def sort_profiles(self, sort_by, order, dry_run=False):
+        self._fail_if_requested("sort_profiles")
+        profiles = sorted(self.profiles, key=lambda profile: profile.get(sort_by, ""), reverse=order == "desc")
+        if not dry_run:
+            self.profiles = profiles
+        return {"profiles": profiles}
+
+
+class _MountedScreenApp(App):
+    def __init__(self, screen):
+        super().__init__()
+        self._initial_screen = screen
+
+    def on_mount(self):
+        self.push_screen(self._initial_screen)
+
+
+def _profile(name="existing"):
+    return {
+        "name": name,
+        "source": "source",
+        "target": "target",
+        "description": "original",
+        "parsers": [],
+        "tags": [],
+        "created_at": "2026-09-28T00:00:00",
+    }
+
+
+def _status_text(screen):
+    return str(screen.query_one("#status-bar").render())
+
+
+def _fill_profile_form(modal, name, source="source", target="target", description="description"):
+    modal.query_one("#input-name").value = name
+    modal.query_one("#input-source").value = source
+    modal.query_one("#input-target").value = target
+    modal.query_one("#input-desc").value = description
+
+
+def test_profiles_add_edit_delete_workflows_submit_and_report_status():
+    config = _MemoryProfileConfig()
+    screen = ProfilesScreen(config)
+    app = _MountedScreenApp(screen)
+
+    async def exercise():
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("a")
+            await pilot.pause()
+            add_modal = app.screen
+            _fill_profile_form(add_modal, "new")
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.screen is screen
+            assert config.get_profile("new") is not None
+            assert "added" in _status_text(screen)
+
+            await pilot.press("e")
+            await pilot.pause()
+            edit_modal = app.screen
+            edit_modal.query_one("#input-name").value = "renamed"
+            edit_modal.query_one("#input-desc").value = "updated"
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.screen is screen
+            assert config.get_profile("renamed")["description"] == "updated"
+            assert "renamed" in _status_text(screen)
+
+            await pilot.press("d")
+            await pilot.pause()
+            await pilot.press("y")
+            await pilot.pause()
+            assert config.get_profile("renamed") is None
+            assert "Deleted" in _status_text(screen)
+
+    asyncio.run(exercise())
+
+
+def test_duplicate_profile_name_stays_actionable_in_add_form():
+    config = _MemoryProfileConfig([_profile()])
+    screen = ProfilesScreen(config)
+    app = _MountedScreenApp(screen)
+
+    async def exercise():
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("a")
+            await pilot.pause()
+            modal = app.screen
+            _fill_profile_form(modal, "existing")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert app.screen is modal
+            assert "already exists" in str(modal.query_one("#form-error").render()).lower()
+            assert app.screen.focused.id == "input-name"
+            assert len(config.list_profiles()) == 1
+
+    asyncio.run(exercise())
+
+
+def test_duplicate_profile_rename_stays_actionable_in_edit_form():
+    config = _MemoryProfileConfig([_profile("existing"), _profile("other")])
+    screen = ProfilesScreen(config)
+    app = _MountedScreenApp(screen)
+
+    async def exercise():
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("e")
+            await pilot.pause()
+            modal = app.screen
+            _fill_profile_form(modal, "other")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert app.screen is modal
+            assert "already exists" in str(modal.query_one("#form-error").render()).lower()
+            assert app.screen.focused.id == "input-name"
+            assert [profile["name"] for profile in config.list_profiles()] == ["existing", "other"]
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("context", ["screen", "add", "edit", "delete"])
+def test_profiles_ctrl_c_exits_from_screen_and_mounted_modals(context):
+    config = _MemoryProfileConfig([_profile()])
+    screen = ProfilesScreen(config)
+    app = _MountedScreenApp(screen)
+
+    async def exercise():
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            if context != "screen":
+                await pilot.press({"add": "a", "edit": "e", "delete": "d"}[context])
+                await pilot.pause()
+            await pilot.press("ctrl+c")
+            await pilot.pause()
+            assert not pilot.app.is_running
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("operation,key", [("add_profile", "a"), ("update_profile_field", "e"), ("remove_profile", "d")])
+def test_profile_persistence_failures_are_reported_without_success(operation, key):
+    config = _MemoryProfileConfig([_profile()])
+    config.failures.add(operation)
+    screen = ProfilesScreen(config)
+    app = _MountedScreenApp(screen)
+
+    async def exercise():
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press(key)
+            await pilot.pause()
+            if key in ("a", "e"):
+                modal = app.screen
+                _fill_profile_form(modal, "new" if key == "a" else "existing")
+                await pilot.press("enter")
+            else:
+                await pilot.press("y")
+            await pilot.pause()
+
+            status = _status_text(screen).lower()
+            assert "error" in status or "failed" in status
+            assert not any(word in status for word in (" added", " updated", " deleted"))
+
+    asyncio.run(exercise())
+
+
+def test_profiles_tab_moves_forward_and_shift_tab_returns_focus():
+    config = _MemoryProfileConfig([_profile()])
+    screen = ProfilesScreen(config)
+    app = _MountedScreenApp(screen)
+
+    async def exercise():
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            first_focus = app.screen.focused
+            await pilot.press("tab")
+            await pilot.pause()
+            assert app.screen.focused is not first_focus
+            await pilot.press("shift+tab")
+            await pilot.pause()
+            assert app.screen.focused is first_focus
+
+    asyncio.run(exercise())
+
+
+def test_profiles_section_keys_only_move_focus_and_action_hints_are_task_actions():
+    config = _MemoryProfileConfig([_profile()])
+    screen = ProfilesScreen(config)
+    app = _MountedScreenApp(screen)
+
+    async def exercise():
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            original_profiles = config.list_profiles()
+            for key in ("ctrl+1", "alt+2", "f3"):
+                await pilot.press(key)
+                await pilot.pause()
+                assert app.screen is screen
+            assert config.list_profiles() == original_profiles
+            action_text = screen.query_one("#action-keys").render().plain
+            assert all(key not in action_text for key in ("Ctrl", "Alt", "F1", "F2", "F3", "Up", "Down"))
+
+    asyncio.run(exercise())

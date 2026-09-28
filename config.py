@@ -30,6 +30,7 @@ import json
 import os
 import re
 import shutil
+import copy
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -45,24 +46,46 @@ REPORTS_DIR = CONFIG_DIR / "reports"
 
 class ConfigManager:
     def __init__(self):
-        self._ensure_config_dir()
-        self.profiles = self._load()
-        self.suites = self._load_suites()
+        self.recovery_errors: list[str] = []
+        self._profiles_load_error: str | None = None
+        self._suites_load_error: str | None = None
+        try:
+            self._ensure_config_dir()
+        except OSError as err:
+            self.recovery_errors.append(f"Could not prepare configuration directory: {err}")
+        try:
+            self.profiles = self._load()
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as err:
+            self._profiles_load_error = str(err)
+            self.profiles = []
+            self.recovery_errors.append(f"Profiles were not loaded; {CONFIG_FILE} was preserved: {err}")
+        try:
+            self.suites = self._load_suites()
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as err:
+            self._suites_load_error = str(err)
+            self.suites = []
+            self.recovery_errors.append(f"Suites were not loaded; {SUITES_FILE} was preserved: {err}")
 
     def _ensure_config_dir(self):
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         if not CONFIG_FILE.exists():
-            CONFIG_FILE.write_text(json.dumps({"profiles": []}, indent=2))
+            CONFIG_FILE.write_text(json.dumps({"profiles": []}, indent=2), encoding="utf-8")
         if not SUITES_FILE.exists():
-            SUITES_FILE.write_text(json.dumps({"suites": []}, indent=2))
+            SUITES_FILE.write_text(json.dumps({"suites": []}, indent=2), encoding="utf-8")
         if not DEFAULT_MAPPING_FILE.exists() and BUNDLED_MAPPING_FILE.exists():
             shutil.copy2(BUNDLED_MAPPING_FILE, DEFAULT_MAPPING_FILE)
 
     def _load(self):
-        data = json.loads(CONFIG_FILE.read_text())
-        return data.get("profiles", [])
+        data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or not isinstance(data.get("profiles"), list):
+            raise ValueError("expected a JSON object containing a profiles list")
+        if any(not isinstance(profile, dict) for profile in data["profiles"]):
+            raise ValueError("profiles must contain JSON objects")
+        return data["profiles"]
 
     def _save(self):
+        if self._profiles_load_error:
+            raise RuntimeError(f"Cannot save profiles while the original file is invalid: {CONFIG_FILE}")
         # Prepare profiles for saving, omitting empty optional fields
         profiles_to_save = []
         for profile in self.profiles:
@@ -71,14 +94,20 @@ class ConfigManager:
             if "tags" in profile_copy and not profile_copy["tags"]:
                 profile_copy.pop("tags", None)
             profiles_to_save.append(profile_copy)
-        CONFIG_FILE.write_text(json.dumps({"profiles": profiles_to_save}, indent=2))
+        CONFIG_FILE.write_text(json.dumps({"profiles": profiles_to_save}, indent=2), encoding="utf-8")
 
     def _load_suites(self) -> list:
-        data = json.loads(SUITES_FILE.read_text())
-        return data.get("suites", [])
+        data = json.loads(SUITES_FILE.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or not isinstance(data.get("suites"), list):
+            raise ValueError("expected a JSON object containing a suites list")
+        if any(not isinstance(suite, dict) for suite in data["suites"]):
+            raise ValueError("suites must contain JSON objects")
+        return data["suites"]
 
     def _save_suites(self):
-        SUITES_FILE.write_text(json.dumps({"suites": self.suites}, indent=2))
+        if self._suites_load_error:
+            raise RuntimeError(f"Cannot save suites while the original file is invalid: {SUITES_FILE}")
+        SUITES_FILE.write_text(json.dumps({"suites": self.suites}, indent=2), encoding="utf-8")
 
     def add_profile(
         self,
@@ -569,7 +598,11 @@ class GlobalConfig:
     }
 
     def __init__(self):
-        self._ensure_config_file()
+        self.load_error: str | None = None
+        try:
+            self._ensure_config_file()
+        except OSError as err:
+            self.load_error = str(err)
 
     def _ensure_config_file(self):
         """Create global config file if it doesn't exist."""
@@ -579,9 +612,27 @@ class GlobalConfig:
     def load(self) -> dict:
         """Load and return the entire global config."""
         try:
-            return json.loads(GLOBAL_CONFIG_FILE.read_text())
-        except (json.JSONDecodeError, FileNotFoundError):
-            return dict(self.DEFAULT_CONFIG)
+            data = json.loads(GLOBAL_CONFIG_FILE.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("expected a JSON object")
+            backup = data.get("backup", {})
+            if not isinstance(backup, dict):
+                raise ValueError("'backup' must be a JSON object")
+            if "enabled" in backup and not isinstance(backup["enabled"], bool):
+                raise ValueError("'backup.enabled' must be true or false")
+            if "max_backups" in backup and (
+                not isinstance(backup["max_backups"], int)
+                or isinstance(backup["max_backups"], bool)
+                or backup["max_backups"] < 0
+            ):
+                raise ValueError("'backup.max_backups' must be a non-negative integer")
+            self.load_error = None
+            return data
+        except FileNotFoundError:
+            return copy.deepcopy(self.DEFAULT_CONFIG)
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as err:
+            self.load_error = f"{GLOBAL_CONFIG_FILE} was preserved: {err}"
+            return copy.deepcopy(self.DEFAULT_CONFIG)
 
     def save(self, config: dict):
         """Save the global config."""

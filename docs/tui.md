@@ -9,7 +9,7 @@ Baseline cross-screen standards (keybinding fallback policy, phase model, and te
 ## Overview
 
 `mcru-tui` is a terminal user interface powered by [Textual](https://textualize.io/textual/) that provides an interactive, menu-driven alternative to the CLI. It offers the same functionality as `mcru` but with:
-- Animated home screen with ASCII art
+- Static home screen splash with ASCII art
 - Keyboard-navigable command menus
 - Real-time sync progress tracking
 - Visual result summaries
@@ -28,23 +28,18 @@ All profiles, suites, and reports saved in the TUI are automatically available i
 mcru-tui
 ```
 
-The home screen will display:
-- Animated ASCII art title
-- List of available commands (Profile, Suite, Run, Reports, Config, Quit)
-- Command help text
+The home screen will display a static ASCII art title, a command list, and command-entry help.
 
 ### Navigation
 
-- **Arrow Up/Down** — Move selection in command list
-- **Enter** — Select highlighted command
-- **Single key** — Quick command access:
-  - `p` → Profile
-  - `s` → Suite
-  - `r` → Run
-  - `h` → Reports
-  - `b` → Backups
-  - `c` → Config
-  - `q` → Quit, Escape → Back (context-dependent)
+- Type a command and press **Enter**, or use the command list when the input is empty.
+- **Alt+P/S/R/H/B/C** — Open Profiles, Suites, Run, Reports, Backups, or Config while the input has focus.
+- **Alt+Q** or **Ctrl+C** — Quit from the focused command input.
+- **Arrow Up/Down** — Move selection in the command list; they do not navigate command history.
+- **Tab** — Complete a unique or first matching command.
+- Type `q`, `quit`, or `exit` and press **Enter** to quit from command entry.
+
+Command history and cycling the splash animation are deferred; the splash remains on its first frame.
 
 ---
 
@@ -53,26 +48,26 @@ The home screen will display:
 **Purpose:** Entry point for all TUI operations.
 
 **Features:**
-- Animated ASCII art splash at top (cycles through frames)
+- Static ASCII art splash at top
 - List of available commands with descriptions
 - Arrow key navigation between commands
-- Quick single-key access
+- Command entry and Alt-key quick access
 
 **Commands:**
-| Command | Shortcut | Purpose | Phase |
-|---------|----------|---------|-------|
-| Profile | `p` | Manage sync profiles | 2 |
-| Suite | `s` | Manage profile suites | 3 |
-| Run | `r` | Execute sync operations | 4 |
-| Reports | `h` | View historical reports | 5 |
-| Backups | `b` | Manage backups | 5+ |
-| Config | `c` | Settings and presets | 6 |
-| Quit | `q` | Exit TUI | 1 |
+| Command | Shortcut | Purpose |
+|---------|----------|---------|
+| Profile | `Alt+P` | Manage sync profiles |
+| Suite | `Alt+S` | Manage profile suites |
+| Run | `Alt+R` | Execute sync operations |
+| Reports | `Alt+H` | View run reports |
+| Backups | `Alt+B` | Manage backups |
+| Config | `Alt+C` | Settings and presets |
+| Quit | `Alt+Q` / `Ctrl+C` | Exit TUI |
 
 **Navigation:**
-- Arrow keys to move selection
-- Enter to execute
-- Single-key shortcuts for quick access
+- Arrow keys move selection in the command list when the input is empty
+- Enter submits typed input, or runs the selected command when the input is empty
+- Alt-key shortcuts open their corresponding screens while the input has focus
 
 ---
 
@@ -92,12 +87,21 @@ The home screen will display:
 - **Edit profile** — Modify existing profile fields, including rename
 - **Delete profile** — Remove profile with confirmation
 - **Verify profile** — Check that source/target paths exist
+- **Duplicate names** — The form remains open and focuses the name field for correction
+- **Tab / Shift+Tab** — Move focus forward / backward through focusable controls
 
 **Key bindings:**
 - `a` → Add profile
 - `e` → Edit selected
 - `d` → Delete selected
 - `v` → Verify paths
+- `s` → Cycle sort mode
+- `Shift+S` → Save sort order
+- `q` / `Esc` → Back to home
+- `Ctrl+C` → Quit TUI immediately, including from the add/edit and delete-confirmation modals
+- `Ctrl+1/2/3`, `Alt+1/2/3`, or `F1/F2/F3` → Focus sections 1–3; focus only
+
+Tab and Shift+Tab use normal focus traversal. Section keys never invoke profile actions and are not shown in the action bar.
 
 ### Phase 3: Suite Management (Complete)
 
@@ -106,7 +110,6 @@ The home screen will display:
 - **Edit suite** — Modify suite description
 - **Delete suite** — Remove suite with confirmation
 - **Manage profiles** — Add/remove/reorder profiles in suite
-- **Show profile order** — Display ordered profile list
 
 **Key bindings:**
 - `a` → Add suite
@@ -118,6 +121,7 @@ The home screen will display:
 
 **Navigation note:**
 - The main Suites screen does not expose section-to-section navigation keys.
+- Tab and Shift+Tab use normal focus traversal on the main screen; it has no screen-specific Tab action.
 - Section headers on this screen are unlabeled by number because only the suite list is directly interactive.
 
 **Manage Profiles sub-screen** (opened with `m` from the suite list):
@@ -136,7 +140,7 @@ The Suites screen is a synchronous CRUD management screen. The following standar
 - **Phase model** (`selection` / `running` / `done`): Not applicable — all operations are immediate synchronous config writes with no async execution phase.
 - **Threading and callback safety** (run tokens, stale callback rejection): Not applicable — no background threads are used.
 
-The status bar provides immediate feedback for all operations in place of a phase-driven outcome model.
+The status bar provides immediate success/error feedback. The main Suites screen has no section-focus bindings; Manage Profiles supports Ctrl/Alt/F1–F3 focus fallbacks. This screen-specific scope does not change the baseline for asynchronous workflows.
 
 ### Phase 4: Sync Execution (Complete)
 
@@ -144,6 +148,8 @@ The status bar provides immediate feedback for all operations in place of a phas
 - Profile/Suite selector (dropdown or searchable list)
 - Options panel:
   - [ ] Dry-run (preview only, no file changes)
+  - [ ] Create backup before a live sync
+  - [ ] Force target changelog
   - Override source path (optional)
   - Override target path (optional)
   - Override mapping preset (optional)
@@ -154,6 +160,7 @@ The status bar provides immediate feedback for all operations in place of a phas
 - Current operation label (e.g., "Scanning source...")
 - File count: current/total
 - Percentage complete (if calculable)
+- **Cancellation:** Escape requests cooperative cancellation and leaves the screen running until the worker completes. Ctrl+C requests cancellation and closes the TUI promptly without joining the worker on the UI thread. The non-daemon profile worker may remain alive until its current filesystem operation returns and it observes cancellation.
 
 **On completion:**
 - Result summary:
@@ -163,26 +170,30 @@ The status bar provides immediate feedback for all operations in place of a phas
   - ✓ Unchanged files count
   - ⚠ Errors count (if any)
 - Option to view full error details (if errors occurred)
-- Option to save report (auto-saved by default)
+- Report path is shown when the current run path generates a report
 - Back button to select another profile/suite
+- Outcome is `success`, `partial`, `failed`, or `cancelled`; report, changelog, and backup-finalization failures are shown as post-run warnings and can make a completed run `partial`.
+- A cancelled run retains completed-operation results and explicitly warns that completed changes were not rolled back.
 
 **Key bindings:**
-- `Space` → Start sync
-- `Escape` → Cancel (if running), Back (if complete)
+- Click **Start** or press `Space` to start; Space on a focused checkbox toggles that option instead.
+- `Ctrl+1/2/3`, `Alt+1/2/3`, or `F1/F2/F3` → Focus sections 1–3; focus only
+- `Tab` → Toggle Profile/Suite mode during selection
+- `Escape` / `q` → Request cancellation while running; return to selection when done; return home from selection
+- `Ctrl+C` → Request cooperative cancellation if running, then close the TUI promptly
 
-### Phase 5: Reports Viewing (Complete)
+Both the source and target must already exist as directories before a run starts.
 
-- **List recent reports** — Table with Profile/Suite, Timestamp, Added/Updated/Removed counts
-- **Search/filter** — By profile name, date range, result type
-- **View full report** — Scrollable text view of complete report
 - **Delete report** — Remove individual reports or bulk prune old reports
+- New reports persist an explicit outcome. Older reports without outcome metadata remain visible and are classified as `unknown`; no outcome is inferred from their contents.
+- Report reads and summaries run in a worker, and stale reads are ignored when the selected report changes.
 
 **Key bindings:**
 - `/` → Search/filter
 - `v` → View selected report
 - `d` → Delete selected report
 - `p` → Prune old reports
-- `q` / `Esc` → Back to home; if search is open, first closes and clears search
+- `q` / `Escape` → Back to home; Escape closes and clears an open search first. With search focused, `q` is entered as search text.
 - `Ctrl+C` → Quit TUI immediately
 - `Ctrl+1` / `Alt+1` / `F1` → Focus Reports list (Section 1)
 - `Ctrl+2` / `Alt+2` / `F2` → Focus Details panel (Section 2)
@@ -197,6 +208,7 @@ Full backup management is available in the TUI:
 - **Pin/unpin backup** — Protect important backups from normal pruning
 - **Delete backup** — Remove selected backup with confirmation
 - **Prune backups** — Keep the newest N backups, with preview and confirmation
+- Backup IDs identify rows unambiguously. If prune candidates change after preview, deletion is aborted; filesystem and ZIP errors are reported in the status bar.
 
 See [docs/backups.md](backups.md) for complete CLI reference.
 
@@ -211,6 +223,7 @@ See [docs/backups.md](backups.md) for complete CLI reference.
 - `Ctrl+1` / `Alt+1` / `F1` → Focus Backups list (Section 1)
 - `Ctrl+2` / `Alt+2` / `F2` → Focus Details panel (Section 2)
 - `Ctrl+3` / `Alt+3` / `F3` → Focus Actions bar (Section 3)
+- Tab and Shift+Tab use normal focus traversal; section focus keys only move focus.
 
 ### Phase 6: Configuration (Complete)
 
@@ -223,9 +236,10 @@ See [docs/backups.md](backups.md) for complete CLI reference.
 
 - **Quick actions:**
   - Open config directory (in file explorer)
-  - View mapping presets
   - Reset mapping presets to defaults
   - Reset all (`~/.mcru/` wiped and re-initialized)
+- Config shows the effective mapping file path. When `MCRU_MAPPING_FILE` selects an external file, resetting bundled presets is disabled and explained in the screen.
+- Malformed profiles, suites, or global settings are preserved and reported as a recovery-needed status so the TUI remains reachable. Writes to a malformed profiles/suites file are blocked until recovery; reset-all stages valid defaults before replacing user data and preserves existing data if staging fails.
 
 **Key bindings:**
 - `o` → Open directory
@@ -237,6 +251,7 @@ See [docs/backups.md](backups.md) for complete CLI reference.
 - `Ctrl+1` / `Alt+1` / `F1` → Focus Paths panel (Section 1)
 - `Ctrl+2` / `Alt+2` / `F2` → Focus Settings/actions panel (Section 2)
 - `Ctrl+3` / `Alt+3` / `F3` → Focus Keys bar (Section 3)
+- Tab and Shift+Tab use normal focus traversal; section focus keys only move focus.
 
 **Deviation from TUI Screen Standards:**
 Config is a static settings and maintenance screen rather than a CRUD or execution workflow. It follows the global quit/back and section keybinding policy, but keeps a static Paths / Actions / Keys layout instead of introducing a phase model or interactive list. Section focus keys are focus-only and never trigger open, reset, or destructive actions.
@@ -254,85 +269,66 @@ Main thread (Textual event loop)
   ├─ Renders UI
   └─ Receives messages from background threads
 
-Background thread (MCRU)
-  ├─ Runs syncer.run() (can take seconds/minutes)
+Background worker (Run sync / report reads)
+  ├─ Runs syncer.run() or reads and summarizes report contents
   ├─ Posts progress callbacks
-  └─ Posts completion with results
+  └─ Posts completion or report data
 ```
 
-**Thread safety:** Textual's `PostMessage` system ensures that all UI updates happen on the main thread, even when data is generated by background threads.
+Run syncs and report reads/summaries use background workers. Report selection generations reject stale worker results. Profile/suite CRUD, backup actions, and Config maintenance actions are synchronous; their success and failure feedback is shown in the status bar. The baseline's worker-only phase, cancellation, and callback rules are not applicable to those operations because they do not start workers.
+
+Ctrl+C on Run signals cooperative cancellation and exits without waiting for worker cleanup. Cancellation does not roll back completed filesystem mutations, and a non-daemon profile worker can continue until its current filesystem operation returns.
 
 **Example (from `tui/utils.py`):**
 ```python
 syncer = ThreadedSyncer(config, dry_run=False)
 syncer.on_complete = lambda results, error: self.handle_sync_complete(results, error)
 syncer.start()  # Runs in background
-# UI remains responsive
 ```
 
 ---
 
 ## Performance Considerations
 
-**Large profiles:**
-- Source/target with thousands of files: sync may take several seconds
-- TUI will show progress spinner to indicate work is happening
-- No UI blocks; spinner proves responsiveness
 
 **Responsiveness:**
-- All file I/O (reading, hashing, writing) runs in background thread
-- Terminal remains interactive even with large operations
-- Progress updates streamed to UI as files are processed
-
 **Memory:**
-- In-memory structures for sync are identical to CLI (`~O(file_count)` hashes and paths)
 - TUI display buffers are minimal (single screen at a time)
 - No significant overhead vs CLI
 
 ---
-
-## Terminal Requirements
-
-**Minimum terminal size:** 80x24 (standard VT100)  
-**Recommended:** 100x30 or larger for comfortable navigation
-
-**Feature support:**
-- 16-bit color support recommended (most modern terminals)
 - Mouse input supported (optional; keyboard-only navigation always works)
 - Unicode support required for ASCII art and borders
-
-**Tested on:**
-- Windows Terminal (Windows 10+)
-- macOS Terminal / iTerm2
-- Linux: xterm, urxvt, GNOME Terminal, Konsole, etc.
-
 **Known issues:**
-- Very small terminals (<60 width) may wrap text awkwardly
 - High-latency SSH connections may see delayed input rendering
 
 ---
 
-## Keyboard Reference
-
-### Global Bindings (All Screens)
-
 | Key | Action |
 |-----|--------|
-| `q` | Quit (from home) / Back (from other screens) |
-| `Escape` | Back to home |
+| `Ctrl+C` | Quit from every screen and modal; on Run, signal cancellation before closing |
+| `q` | Back on screens where applicable; type `q` and press Enter to quit from Home |
+| `Escape` | Back, close a modal, or request Run cancellation according to the current screen/phase |
+
+Screen action bars show task actions only; section-focus fallbacks and generic arrow-key navigation remain implicit.
 
 ### Home Screen
 
 | Key | Action |
 |-----|--------|
 | `↑` / `↓` | Navigate command list |
-| `Enter` | Execute selected command |
-| `p` | Profile screen |
-| `s` | Suite screen |
-| `r` | Run screen |
-| `h` | Reports screen |
-| `c` | Config screen |
-| `q` | Quit |
+| `Enter` | Submit typed command, or execute the selected command when input is empty |
+| `Alt+P` | Profile screen |
+| `Alt+S` | Suite screen |
+| `Alt+R` | Run screen |
+| `Alt+H` | Reports screen |
+| `Alt+B` | Backups screen |
+| `Alt+C` | Config screen |
+| `Alt+Q` / `Ctrl+C` | Quit |
+| `Tab` | Complete a command from the input |
+| `q`, `quit`, `exit` + `Enter` | Quit from command entry |
+
+Home has no numbered sections or section-focus fallbacks; its Alt shortcuts route to feature screens.
 
 ### Profile Screen (Phase 2)
 
@@ -345,8 +341,9 @@ syncer.start()  # Runs in background
 | `v` | Verify paths |
 | `s` | Cycle sort mode |
 | `Shift+s` | Save sort order |
-| `Ctrl+1/2/3` | Jump to section 1 (list) / 2 (details) / 3 (actions) |
-| `Alt+1/2/3`, `F1/F2/F3` | Alternative section navigation keys |
+| `Tab` / `Shift+Tab` | Normal focus traversal |
+| `Ctrl+1/2/3` | Focus-only section 1 (list) / 2 (details) / 3 (actions) |
+| `Alt+1/2/3`, `F1/F2/F3` | Focus-only section fallbacks |
 | `Escape` / `q` | Back to home screen |
 | `Ctrl+C` | Quit TUI immediately |
 
@@ -359,6 +356,11 @@ syncer.start()  # Runs in background
 | `e` | Edit selected |
 | `d` | Delete selected |
 | `m` | Manage profiles |
+| `Tab` / `Shift+Tab` | Normal focus traversal on the main screen |
+| `q` / `Escape` | Back to home |
+| `Ctrl+C` | Quit TUI immediately |
+
+The main Suites screen does not expose section-focus keys. In Manage Profiles, `Tab` switches between the In Suite and Available lists; Ctrl/Alt/F1–F3 focus sections 1–3, with section 3 reporting that it is not focusable.
 
 ### Run Screen (Phase 4)
 
@@ -366,13 +368,14 @@ syncer.start()  # Runs in background
 |-----|--------|
 | `↑` / `↓` | Navigate profile/suite list (section 1) or navigate options (section 2, if focused there) |
 | `Space` | Start sync (unless focused on a checkbox option, then toggles the checkbox) |
-| `Tab` | Toggle Profile/Suite mode before running |
+| `Tab` | Toggle Profile/Suite mode during selection |
 | `r` | Re-run after completion |
-| `Ctrl+1/2/3` | Jump to section 1/2/3 |
-| `Alt+1/2/3`, `F1/F2/F3` | Alternative section navigation keys |
-| `q` | Back (same behavior as Escape) |
-| `Escape` | Cancel (during run) / Back to selection (after completion) |
-| `Ctrl+C` | Quit TUI immediately |
+| `Ctrl+1/2/3` | Focus-only section 1/2/3 |
+| `Alt+1/2/3`, `F1/F2/F3` | Focus-only section fallbacks |
+| `Escape` / `q` | Request cancellation while running; return to selection when done; return home from selection |
+| `Ctrl+C` | Request cooperative cancellation, then close the TUI promptly |
+
+Section focus keys are focus-only. Cancellation preserves completed results and does not roll back changes. A non-daemon profile worker may continue until its current filesystem operation returns.
 
 **Option Navigation Details (Section 2):**
 When focus is in the Options panel (section 2), use `Up` and `Down` arrows to cycle through available run options:
@@ -397,6 +400,11 @@ When focus is on a checkbox option, press `Space` to toggle the option value (e.
 | `v` | View selected report |
 | `d` | Delete selected |
 | `p` | Prune old reports |
+| `q` / `Escape` | Back to home; Escape closes and clears an open search first; focused search treats `q` as text |
+| `Ctrl+C` | Quit TUI immediately, including from viewer and confirmation modals |
+| `Ctrl+1/2/3`, `Alt+1/2/3`, `F1/F2/F3` | Focus-only section navigation |
+
+The report list includes counts and an outcome. New reports store `success`, `partial`, `failed`, or `cancelled`; legacy reports without metadata are shown as `unknown`. Filters include name, inclusive date range, and outcome. Tab uses normal focus traversal.
 
 ### Backups Screen
 
@@ -413,6 +421,8 @@ When focus is on a checkbox option, press `Space` to toggle the option value (e.
 | `q` | Back to home screen |
 | `Escape` | Back to home screen |
 | `Ctrl+C` | Quit TUI immediately |
+| `Ctrl+1/2/3`, `Alt+1/2/3`, `F1/F2/F3` | Focus-only section navigation |
+| `Tab` / `Shift+Tab` | Normal focus traversal |
 
 ### Config Screen (Phase 6)
 
@@ -422,6 +432,10 @@ When focus is on a checkbox option, press `Space` to toggle the option value (e.
 | `v` | View mapping presets |
 | `r` | Reset presets |
 | `R` | Reset all (with confirmation) |
+| `q` / `Escape` | Back to home |
+| `Ctrl+C` | Quit TUI immediately, including from viewer and confirmation modals |
+| `Ctrl+1/2/3`, `Alt+1/2/3`, `F1/F2/F3` | Focus-only section navigation |
+| `Tab` / `Shift+Tab` | Normal focus traversal |
 
 ---
 

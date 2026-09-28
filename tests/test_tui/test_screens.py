@@ -2,8 +2,38 @@
 TUI screen tests.
 """
 
+import asyncio
+
 import pytest
-from tui.screens.suites import ManageProfilesScreen, SuiteActionBar, SuitesScreen
+from textual.app import App
+from tui.app import MCRecipeApp
+from tui.screens import backups as backups_module
+from tui.screens import reports as reports_module
+from tui.screens.backups import (
+    ConfirmModal as BackupConfirmModal,
+    PruneBackupsModal,
+    TextViewerModal as BackupTextViewerModal,
+    BackupsScreen,
+)
+from tui.screens.config import (
+    ConfirmModal as ConfigConfirmModal,
+    ConfigScreen,
+    ResetAllModal,
+    TextViewerModal as ConfigTextViewerModal,
+)
+from tui.screens.reports import (
+    ConfirmModal as ReportConfirmModal,
+    PruneReportsModal,
+    ReportsScreen,
+    TextViewerModal as ReportTextViewerModal,
+)
+from tui.screens.suites import (
+    ConfirmModal,
+    ManageProfilesScreen,
+    SuiteActionBar,
+    SuiteFormModal,
+    SuitesScreen,
+)
 from tui.screens.home import HomeScreen
 
 
@@ -39,6 +69,17 @@ class _FakeApp:
 
     def pop_screen(self):
         self.popped = True
+
+
+class _GlobalQuitHost(App):
+    BINDINGS = MCRecipeApp.BINDINGS
+
+    def __init__(self, screen):
+        super().__init__()
+        self._initial_screen = screen
+
+    def on_mount(self):
+        self.push_screen(self._initial_screen)
 
 
 class TestSuitesScreenBindings:
@@ -136,6 +177,7 @@ class TestSuitesScreenBindings:
         screen._detail_panel = _DummyDetailPanel()
 
         monkeypatch.setattr(screen, "query_one", lambda *_a, **_k: _DummyPanelsRow(events))
+        monkeypatch.setattr(screen, "_get_selected_suite_name", lambda: None)
         monkeypatch.setattr(screen, "call_after_refresh", lambda _cb: None)
         monkeypatch.setattr(screen, "_show_suite", lambda _idx: None)
 
@@ -222,21 +264,30 @@ class TestManageProfilesScreenBindings:
         screen = ManageProfilesScreen(_DummySuitesConfigManager(), "test-suite")
         events: list[tuple[str, object]] = []
         mounted: list[object] = []
+        callbacks = []
 
         class _OldPanel:
             def __init__(self, panel_id: str):
                 self.id = panel_id
+                self.listview = None
 
             def remove(self):
                 events.append(("remove", self.id))
 
+                async def wait_for_removal():
+                    return None
+
+                return wait_for_removal()
+
         class _DummyRow:
-            def mount(self, widget):
+            async def mount(self, widget):
                 mounted.append(widget)
 
         class _NewPanel:
             def __init__(self):
                 self.id = None
+                self.listview = None
+                self.profile_names = []
 
         screen._in_panel = _OldPanel("in-suite-panel")
         screen._available_panel = _OldPanel("available-panel")
@@ -244,9 +295,11 @@ class TestManageProfilesScreenBindings:
         monkeypatch.setattr(screen, "_build_in_panel", lambda: _NewPanel())
         monkeypatch.setattr(screen, "_build_available_panel", lambda: _NewPanel())
         monkeypatch.setattr(screen, "_sync_active_panel_classes", lambda: None)
-        monkeypatch.setattr(screen, "_focus_active_list", lambda: None)
+        monkeypatch.setattr(screen, "_focus_panel", lambda *_a, **_k: None)
+        monkeypatch.setattr(screen, "call_after_refresh", callbacks.append)
 
         screen._refresh()
+        asyncio.run(callbacks[0]())
 
         assert events == [
             ("remove", "in-suite-panel"),
@@ -291,3 +344,519 @@ def test_remaining_screens_exist():
     assert ReportsScreen is not None
     assert RunProfileScreen is not None
     assert SuitesScreen is not None
+
+
+@pytest.mark.parametrize(
+    "screen_name,modal_name",
+    [
+        ("reports", None),
+        ("reports", "viewer"),
+        ("reports", "confirm"),
+        ("reports", "prune"),
+        ("backups", None),
+        ("backups", "viewer"),
+        ("backups", "confirm"),
+        ("backups", "prune"),
+        ("config", None),
+        ("config", "viewer"),
+        ("config", "confirm"),
+        ("config", "reset"),
+    ],
+)
+def test_global_ctrl_c_exits_from_data_screens_and_modals(screen_name, modal_name, monkeypatch):
+    if screen_name == "reports":
+        class _EmptyReportManager:
+            def list_reports(self, **_kwargs):
+                return []
+
+        monkeypatch.setattr(reports_module, "ReportManager", _EmptyReportManager)
+        screen = ReportsScreen(object())
+        modals = {
+            "viewer": lambda: ReportTextViewerModal("Report", "content"),
+            "confirm": lambda: ReportConfirmModal("Delete", "Confirm?"),
+            "prune": PruneReportsModal,
+        }
+    elif screen_name == "backups":
+        class _EmptyBackupManager:
+            def list_backups(self):
+                return []
+
+        monkeypatch.setattr(backups_module, "BackupManager", _EmptyBackupManager)
+        screen = BackupsScreen(object())
+        modals = {
+            "viewer": lambda: BackupTextViewerModal("Backup", "content"),
+            "confirm": lambda: BackupConfirmModal("Delete", "Confirm?"),
+            "prune": PruneBackupsModal,
+        }
+    else:
+        monkeypatch.setattr(ConfigScreen, "_refresh", lambda _self: None)
+        screen = ConfigScreen(object())
+        modals = {
+            "viewer": lambda: ConfigTextViewerModal("Presets", "content"),
+            "confirm": lambda: ConfigConfirmModal("Reset", "Confirm?"),
+            "reset": ResetAllModal,
+        }
+
+    app = _GlobalQuitHost(screen)
+
+    async def exercise():
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            if modal_name:
+                app.push_screen(modals[modal_name]())
+                await pilot.pause()
+            await pilot.press("ctrl+c")
+            await pilot.pause()
+            assert not pilot.app.is_running
+
+    asyncio.run(exercise())
+
+
+class _HomePilotApp(App):
+    def __init__(self):
+        super().__init__()
+        self.home = None
+        self.routes = []
+
+    def on_mount(self):
+        self.home = HomeScreen(_DummySuitesConfigManager())
+        self.push_screen(self.home)
+
+    def push_profile_screen(self):
+        self.routes.append("profile")
+
+    def push_suite_screen(self):
+        self.routes.append("suite")
+
+    def push_run_screen(self):
+        self.routes.append("run")
+
+    def push_reports_screen(self):
+        self.routes.append("reports")
+
+    def push_backups_screen(self):
+        self.routes.append("backups")
+
+    def push_config_screen(self):
+        self.routes.append("config")
+
+
+def test_home_shortcut_works_with_input_focus_without_consuming_command_entry():
+    app = _HomePilotApp()
+
+    async def exercise():
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.screen.focused is app.home.command_input
+
+            await pilot.press("p")
+            assert app.home.command_input.value == "p"
+            assert app.routes == []
+
+            app.home.command_input.value = ""
+            await pilot.press("alt+p")
+            await pilot.pause()
+            assert app.routes == ["profile"]
+
+            app.routes.clear()
+            await pilot.press(*tuple("profile"), "enter")
+            await pilot.pause()
+            assert app.routes == ["profile"]
+
+    asyncio.run(exercise())
+
+
+def test_home_unknown_command_is_reported_and_retained():
+    app = _HomePilotApp()
+
+    async def exercise():
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press(*tuple("not-a-command"), "enter")
+            await pilot.pause()
+
+            assert app.home.command_input.value == "not-a-command"
+            assert "Unknown command" in str(app.home.query_one("#home-status").render())
+
+    asyncio.run(exercise())
+
+
+def test_home_all_alt_shortcuts_route_with_initial_input_focus():
+    app = _HomePilotApp()
+    shortcuts = (
+        ("alt+p", "profile"),
+        ("alt+s", "suite"),
+        ("alt+r", "run"),
+        ("alt+h", "reports"),
+        ("alt+b", "backups"),
+        ("alt+c", "config"),
+    )
+
+    async def exercise():
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            for key, command in shortcuts:
+                assert app.screen.focused is app.home.command_input
+                await pilot.press(key)
+                assert app.routes.pop() == command
+
+    asyncio.run(exercise())
+
+
+def test_home_arrow_navigation_and_enter_work_from_initial_input_focus():
+    app = _HomePilotApp()
+
+    async def exercise():
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("down")
+            assert app.home.command_list.selected_index == 1
+            await pilot.press("enter")
+            assert app.routes == ["suite"]
+
+    asyncio.run(exercise())
+
+
+def test_home_tab_completes_a_command_from_focused_input():
+    app = _HomePilotApp()
+
+    async def exercise():
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.home.command_input.value = "prof"
+            await pilot.press("tab")
+            assert app.home.command_input.value == "profile"
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("key", ["ctrl+c", "alt+q"])
+def test_home_quit_shortcuts_exit_from_focused_command_input(key):
+    app = _HomePilotApp()
+
+    async def exercise():
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.screen.focused is app.home.command_input
+            await pilot.press(key)
+            await pilot.pause()
+            assert not pilot.app.is_running
+
+    asyncio.run(exercise())
+
+
+class _MemorySuitesConfigManager:
+    def __init__(self, profiles=None, suites=None):
+        self.profiles = [dict(profile) for profile in (profiles or [])]
+        self.suites = [dict(suite) for suite in (suites or [])]
+        self.failures = set()
+
+    def _fail_if_requested(self, operation):
+        if operation in self.failures:
+            raise OSError(f"{operation} failed")
+
+    def list_profiles(self):
+        return [dict(profile) for profile in self.profiles]
+
+    def get_profile(self, name):
+        return next((dict(profile) for profile in self.profiles if profile["name"] == name), None)
+
+    def list_suites(self):
+        return [dict(suite) for suite in self.suites]
+
+    def get_suite(self, name):
+        suite = next((suite for suite in self.suites if suite["name"] == name), None)
+        return dict(suite) if suite else None
+
+    def save_suite(self, name, description="", profiles=None):
+        self._fail_if_requested("save_suite")
+        existing = self.get_suite(name)
+        created_at = existing.get("created_at", "2026-09-28T00:00:00") if existing else "2026-09-28T00:00:00"
+        current_profiles = existing.get("profiles", []) if existing else []
+        self.suites = [suite for suite in self.suites if suite["name"] != name]
+        self.suites.append({
+            "name": name,
+            "description": description,
+            "created_at": created_at,
+            "profiles": list(profiles if profiles is not None else current_profiles),
+        })
+
+    def delete_suite(self, name):
+        self._fail_if_requested("delete_suite")
+        self.suites = [suite for suite in self.suites if suite["name"] != name]
+
+    def add_profile_to_suite(self, suite_name, profile_name):
+        self._fail_if_requested("add_profile_to_suite")
+        suite = next(suite for suite in self.suites if suite["name"] == suite_name)
+        if self.get_profile(profile_name) is None:
+            raise ValueError(f"Profile '{profile_name}' not found.")
+        suite["profiles"].append(profile_name)
+
+    def remove_profile_from_suite(self, suite_name, profile_name):
+        self._fail_if_requested("remove_profile_from_suite")
+        suite = next(suite for suite in self.suites if suite["name"] == suite_name)
+        suite["profiles"].remove(profile_name)
+
+    def reorder_profile_in_suite(self, suite_name, profile_name, position):
+        self._fail_if_requested("reorder_profile_in_suite")
+        suite = next(suite for suite in self.suites if suite["name"] == suite_name)
+        suite["profiles"].remove(profile_name)
+        suite["profiles"].insert(max(0, min(position - 1, len(suite["profiles"]))), profile_name)
+
+
+class _MountedSuitesApp(App):
+    def __init__(self, screen):
+        super().__init__()
+        self._initial_screen = screen
+
+    def on_mount(self):
+        self.push_screen(self._initial_screen)
+
+
+def _suite(name="demo", profiles=None, description=""):
+    return {
+        "name": name,
+        "description": description,
+        "created_at": "2026-09-28T00:00:00",
+        "profiles": list(profiles or []),
+    }
+
+
+def _suite_profile(name):
+    return {"name": name, "source": "source", "target": "target"}
+
+
+def _suite_status(screen):
+    return screen.query_one("#status-bar").render().plain
+
+
+def test_suites_add_edit_delete_workflows_are_mounted_and_report_status():
+    config = _MemorySuitesConfigManager()
+    screen = SuitesScreen(config)
+    app = _MountedSuitesApp(screen)
+
+    async def exercise():
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("a")
+            await pilot.pause()
+            assert isinstance(app.screen, SuiteFormModal)
+            app.screen.query_one("#input-name").value = "full"
+            app.screen.query_one("#input-desc").value = "all profiles"
+            await pilot.press("enter")
+            await pilot.pause()
+            assert config.get_suite("full")["description"] == "all profiles"
+            assert "added" in _suite_status(screen).lower()
+
+            await pilot.press("e")
+            await pilot.pause()
+            assert isinstance(app.screen, SuiteFormModal)
+            app.screen.query_one("#input-desc").value = "updated"
+            await pilot.press("enter")
+            await pilot.pause()
+            assert config.get_suite("full")["description"] == "updated"
+            assert "saved" in _suite_status(screen).lower()
+
+            await pilot.press("d")
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmModal)
+            await pilot.press("y")
+            await pilot.pause()
+            assert config.get_suite("full") is None
+            assert "deleted" in _suite_status(screen).lower()
+
+    asyncio.run(exercise())
+
+
+def test_suite_profile_membership_handles_empty_and_missing_profiles():
+    config = _MemorySuitesConfigManager(
+        profiles=[_suite_profile("available")],
+        suites=[_suite("empty")],
+    )
+    screen = SuitesScreen(config)
+    app = _MountedSuitesApp(screen)
+
+    async def exercise():
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("m")
+            await pilot.pause()
+            manage = app.screen
+            assert isinstance(manage, ManageProfilesScreen)
+            assert manage._in_panel.listview is None
+            await pilot.press("tab")
+            await pilot.pause()
+            await pilot.press("a")
+            await pilot.pause()
+            assert config.get_suite("empty")["profiles"] == ["available"]
+
+    asyncio.run(exercise())
+
+
+def test_missing_suite_profile_is_marked_and_removable():
+    config = _MemorySuitesConfigManager(
+        profiles=[_suite_profile("available")],
+        suites=[_suite("demo", ["missing"])],
+    )
+    screen = SuitesScreen(config)
+    app = _MountedSuitesApp(screen)
+
+    async def exercise():
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("m")
+            await pilot.pause()
+            manage = app.screen
+            missing_item = manage._in_panel.listview.highlighted_child
+            assert missing_item.missing is True
+            await pilot.press("d")
+            await pilot.pause()
+            assert config.get_suite("demo")["profiles"] == []
+
+    asyncio.run(exercise())
+
+
+def test_consecutive_suite_reorders_keep_the_moved_profile_selected():
+    names = ["alpha", "bravo", "charlie", "delta"]
+    config = _MemorySuitesConfigManager(
+        profiles=[_suite_profile(name) for name in names],
+        suites=[_suite("demo", names)],
+    )
+    screen = SuitesScreen(config)
+    app = _MountedSuitesApp(screen)
+
+    async def exercise():
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("m")
+            await pilot.pause()
+            manage = app.screen
+            manage._in_panel.listview.index = 1
+
+            await pilot.press("]")
+            await pilot.pause()
+            assert config.get_suite("demo")["profiles"] == ["alpha", "charlie", "bravo", "delta"]
+            assert manage._selected_from(manage._in_panel.listview) == "bravo"
+
+            await pilot.press("]")
+            await pilot.pause()
+            assert config.get_suite("demo")["profiles"] == ["alpha", "charlie", "delta", "bravo"]
+            assert manage._selected_from(manage._in_panel.listview) == "bravo"
+
+    asyncio.run(exercise())
+
+
+def test_manage_panel_state_changes_only_after_successful_focus():
+    config = _MemorySuitesConfigManager(
+        profiles=[_suite_profile("available")],
+        suites=[_suite("empty")],
+    )
+    screen = ManageProfilesScreen(config, "empty")
+    app = _MountedSuitesApp(screen)
+
+    async def exercise():
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("ctrl+2")
+            await pilot.pause()
+            assert screen._active_panel == "available"
+            available_list = screen._available_panel.listview
+            assert app.screen.focused is available_list
+
+            for key in ("ctrl+1", "alt+1", "f1"):
+                await pilot.press(key)
+                await pilot.pause()
+                assert screen._active_panel == "available"
+                assert app.screen.focused is available_list
+
+            await pilot.press("tab")
+            await pilot.pause()
+            assert screen._active_panel == "available"
+            assert app.screen.focused is available_list
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("context", ["screen", "form", "confirmation", "manage"])
+def test_suites_ctrl_c_exits_from_screen_and_mounted_modals(context):
+    config = _MemorySuitesConfigManager(
+        profiles=[_suite_profile("alpha")],
+        suites=[_suite("demo", ["alpha"])],
+    )
+    screen = SuitesScreen(config)
+    app = _MountedSuitesApp(screen)
+
+    async def exercise():
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            if context != "screen":
+                await pilot.press({"form": "e", "confirmation": "d", "manage": "m"}[context])
+                await pilot.pause()
+                expected = {
+                    "form": SuiteFormModal,
+                    "confirmation": ConfirmModal,
+                    "manage": ManageProfilesScreen,
+                }[context]
+                assert isinstance(app.screen, expected)
+            await pilot.press("ctrl+c")
+            await pilot.pause()
+            assert not pilot.app.is_running
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("operation", ["save_suite", "reorder_profile_in_suite"])
+def test_suite_save_and_reorder_failures_are_reported_without_success(operation):
+    profiles = [_suite_profile("alpha"), _suite_profile("bravo")]
+    config = _MemorySuitesConfigManager(profiles=profiles, suites=[_suite("demo", ["alpha", "bravo"])])
+    config.failures.add(operation)
+    screen = SuitesScreen(config)
+    app = _MountedSuitesApp(screen)
+
+    async def exercise():
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            status_screen = screen
+            if operation == "save_suite":
+                await pilot.press("e")
+                await pilot.pause()
+                app.screen.query_one("#input-desc").value = "changed"
+                await pilot.press("enter")
+            else:
+                await pilot.press("m")
+                await pilot.pause()
+                manage = app.screen
+                status_screen = manage
+                manage._in_panel.listview.index = 0
+                await pilot.press("]")
+            await pilot.pause()
+
+            status = _suite_status(status_screen).lower()
+            assert "error" in status or "failed" in status
+            assert "saved" not in status and "moved" not in status
+            assert config.get_suite("demo")["profiles"] == ["alpha", "bravo"]
+
+    asyncio.run(exercise())
+
+
+def test_suite_delete_failure_is_reported_without_claiming_success():
+    config = _MemorySuitesConfigManager(suites=[_suite("demo")])
+    config.failures.add("delete_suite")
+    screen = SuitesScreen(config)
+    app = _MountedSuitesApp(screen)
+
+    async def exercise():
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("d")
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmModal)
+            await pilot.press("y")
+            await pilot.pause()
+
+            status = _suite_status(screen).lower()
+            assert "could not delete" in status or "error" in status
+            assert "deleted" not in status
+            assert config.get_suite("demo") is not None
+
+    asyncio.run(exercise())

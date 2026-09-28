@@ -326,7 +326,12 @@ class BackupManager:
 
         raise ValueError(f"Backup not found: {backup_id}")
 
-    def prune_backups(self, keep: int = None, include_pinned: bool = False) -> int:
+    def prune_backups(
+        self,
+        keep: int = None,
+        include_pinned: bool = False,
+        expected_ids: set[str] | None = None,
+    ) -> int:
         """
         Delete old backups, excluding pinned (unless include_pinned=True).
 
@@ -351,6 +356,9 @@ class BackupManager:
             to_delete = candidates[keep:]
         else:
             to_delete = candidates
+
+        if expected_ids is not None and {entry.id for entry in to_delete} != expected_ids:
+            raise RuntimeError("Backup candidates changed after preview; prune cancelled. Preview the operation again.")
 
         deleted_count = 0
         for entry in to_delete:

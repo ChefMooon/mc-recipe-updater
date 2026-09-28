@@ -21,7 +21,7 @@ class BackupListItem(ListItem):
     def compose(self):
         pinned = " P" if self.entry.pinned else ""
         created = self.entry.created_at[:16] if self.entry.created_at else "unknown"
-        yield Label(f"{created}  {self.entry.profile}{pinned}")
+        yield Label(f"{created}  {self.entry.profile}  {self.entry.id}{pinned}")
 
 
 class BackupList(Container):
@@ -111,15 +111,19 @@ class BackupDetail(Container):
             self._content.update("[dim]Select a backup to view details[/dim]")
             return
         backup_file = BACKUPS_DIR / entry.filename
-        exists = backup_file.exists()
+        try:
+            exists = backup_file.exists()
+        except OSError as err:
+            self._content.update(f"[red]Could not inspect backup '{entry.id}': {err}[/red]")
+            return
         file_count = "unknown"
         total_size = "unknown"
         try:
             contents = self.backup_manager.view_backup_contents(entry.id)
             file_count = str(len(contents))
             total_size = format_bytes(sum(size for _, size in contents))
-        except Exception:
-            pass
+        except (OSError, ValueError) as err:
+            file_count = f"[red]unavailable: {err}[/red]"
         lines = [
             f"[bold dim]{'ID:':<12}[/bold dim] {entry.id}",
             f"[bold dim]{'Profile:':<12}[/bold dim] {entry.profile}",
@@ -167,7 +171,10 @@ class BackupActionBar(Container):
 class TextViewerModal(ModalScreen[None]):
     """Scrollable text viewer modal."""
 
-    BINDINGS = [Binding("escape", "close", "Close", show=False)]
+    BINDINGS = [
+        Binding("escape", "close", "Close", show=False),
+        Binding("ctrl+c", "force_quit", "Quit", show=False, priority=True),
+    ]
 
     DEFAULT_CSS = """
     TextViewerModal {
@@ -204,11 +211,17 @@ class TextViewerModal(ModalScreen[None]):
     def action_close(self) -> None:
         self.dismiss(None)
 
+    def action_force_quit(self) -> None:
+        self.app.exit()
+
 
 class ConfirmModal(ModalScreen[bool]):
     """Confirmation modal."""
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=False),
+        Binding("ctrl+c", "force_quit", "Quit", show=False, priority=True),
+    ]
 
     DEFAULT_CSS = """
     ConfirmModal {
@@ -246,11 +259,17 @@ class ConfirmModal(ModalScreen[bool]):
     def action_cancel(self) -> None:
         self.dismiss(False)
 
+    def action_force_quit(self) -> None:
+        self.app.exit()
+
 
 class PruneBackupsModal(ModalScreen[dict | None]):
     """Prompt for backup prune options."""
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=False),
+        Binding("ctrl+c", "force_quit", "Quit", show=False, priority=True),
+    ]
 
     DEFAULT_CSS = """
     PruneBackupsModal {
@@ -300,6 +319,9 @@ class PruneBackupsModal(ModalScreen[dict | None]):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+    def action_force_quit(self) -> None:
+        self.app.exit()
 
 
 class BackupsScreen(Screen):
@@ -353,16 +375,26 @@ class BackupsScreen(Screen):
     def __init__(self, config_manager: ConfigManager):
         super().__init__()
         self.config_manager = config_manager
-        self.backup_manager = BackupManager()
+        self._initial_error: str | None = None
+        try:
+            self.backup_manager = BackupManager()
+        except OSError as err:
+            self.backup_manager = BackupManager.__new__(BackupManager)
+            self._initial_error = f"Could not prepare backup storage: {err}"
         self._backups: list[BackupEntry] = []
         self._backup_list: BackupList | None = None
         self._detail_panel: BackupDetail | None = None
         self._status_bar: Static | None = None
         self._pending_backup_id: str | None = None
         self._pending_force_delete = False
+        self._pending_prune_ids: set[str] | None = None
 
     def compose(self):
-        self._backups = self.backup_manager.list_backups()
+        try:
+            self._backups = self.backup_manager.list_backups()
+        except (OSError, ValueError, UnicodeError) as err:
+            self._backups = []
+            self._initial_error = self._initial_error or f"Could not list backups: {err}"
         with Vertical(id="backups-layout"):
             with Horizontal(id="panels-row"):
                 self._backup_list = BackupList(self._backups)
@@ -374,6 +406,8 @@ class BackupsScreen(Screen):
         yield self._status_bar
 
     def on_mount(self) -> None:
+        if self._initial_error:
+            self._set_status(self._initial_error)
         if self._backups:
             self._show_backup(0)
             self.query_one("#backup-listview", ListView).focus()
@@ -393,8 +427,13 @@ class BackupsScreen(Screen):
             return None
         return item.entry if isinstance(item, BackupListItem) else None
 
-    def _refresh_list(self) -> None:
-        self._backups = self.backup_manager.list_backups()
+    def _refresh_list(self) -> bool:
+        try:
+            backups = self.backup_manager.list_backups()
+        except (OSError, ValueError, UnicodeError) as err:
+            self._set_status(f"Could not refresh backups: {err}")
+            return False
+        self._backups = backups
         if self._backup_list:
             self._backup_list.remove()
         row = self.query_one("#panels-row", Horizontal)
@@ -408,6 +447,7 @@ class BackupsScreen(Screen):
                 pass
         elif self._detail_panel:
             self._detail_panel.update_detail(None)
+        return True
 
     def _set_status(self, message: str) -> None:
         if self._status_bar:
@@ -443,8 +483,8 @@ class BackupsScreen(Screen):
             return
         try:
             contents = self.backup_manager.view_backup_contents(entry.id)
-        except ValueError as err:
-            self._set_status(str(err))
+        except (OSError, ValueError) as err:
+            self._set_status(f"Could not view backup '{entry.id}': {err}")
             return
         lines = [f"{path:<70} {format_bytes(size):>10}" for path, size in contents]
         if not lines:
@@ -458,8 +498,8 @@ class BackupsScreen(Screen):
             return
         try:
             count = len(self.backup_manager.view_backup_contents(entry.id))
-        except ValueError as err:
-            self._set_status(str(err))
+        except (OSError, ValueError) as err:
+            self._set_status(f"Could not inspect backup '{entry.id}': {err}")
             return
         self._pending_backup_id = entry.id
         message = (
@@ -496,9 +536,10 @@ class BackupsScreen(Screen):
             else:
                 self.backup_manager.pin_backup(entry.id)
                 self._set_status(f"Pinned backup '{entry.id}'.")
-            self._refresh_list()
-        except ValueError as err:
-            self._set_status(str(err))
+            if self._refresh_list():
+                self._set_status(f"{'Unpinned' if entry.pinned else 'Pinned'} backup '{entry.id}'.")
+        except (OSError, ValueError, UnicodeError) as err:
+            self._set_status(f"Pin update failed: {err}")
 
     def action_delete_backup(self) -> None:
         entry = self._selected_backup()
@@ -523,10 +564,10 @@ class BackupsScreen(Screen):
             return
         try:
             self.backup_manager.delete_backup(backup_id, force=force)
-            self._refresh_list()
-            self._set_status(f"Deleted backup '{backup_id}'.")
-        except ValueError as err:
-            self._set_status(str(err))
+            if self._refresh_list():
+                self._set_status(f"Deleted backup '{backup_id}'.")
+        except (OSError, ValueError, UnicodeError) as err:
+            self._set_status(f"Delete failed: {err}")
 
     def action_prune_backups(self) -> None:
         self.app.push_screen(PruneBackupsModal(), callback=self._preview_prune)
@@ -537,7 +578,11 @@ class BackupsScreen(Screen):
             return
         keep = result["keep"]
         include_pinned = result["include_pinned"]
-        candidates = self.backup_manager.list_backups()
+        try:
+            candidates = self.backup_manager.list_backups()
+        except (OSError, ValueError, UnicodeError) as err:
+            self._set_status(f"Prune preview failed: {err}")
+            return
         if not include_pinned:
             candidates = [entry for entry in candidates if not entry.pinned]
         candidates.sort(key=lambda entry: entry.created_at, reverse=True)
@@ -545,21 +590,34 @@ class BackupsScreen(Screen):
         if not to_delete:
             self._set_status(f"No backups to prune when keeping {keep}.")
             return
+        expected_ids = {entry.id for entry in to_delete}
+        self._pending_prune_ids = expected_ids
         names = "\n".join(f"  {entry.id}" for entry in to_delete[:20])
         if len(to_delete) > 20:
             names += f"\n  ... and {len(to_delete) - 20} more"
         self.app.push_screen(
             ConfirmModal("Confirm Prune", f"Delete {len(to_delete)} backup(s)?\n\n{names}"),
-            callback=lambda confirmed: self._on_prune_confirmed(confirmed, keep, include_pinned),
+            callback=lambda confirmed: self._on_prune_confirmed(confirmed, keep, include_pinned, expected_ids),
         )
 
-    def _on_prune_confirmed(self, confirmed: bool, keep: int, include_pinned: bool) -> None:
+    def _on_prune_confirmed(
+        self, confirmed: bool, keep: int, include_pinned: bool, expected_ids: set[str] | None = None
+    ) -> None:
+        self._pending_prune_ids = None
         if not confirmed:
             self._set_status("Prune cancelled.")
             return
-        deleted = self.backup_manager.prune_backups(keep=keep, include_pinned=include_pinned)
-        self._refresh_list()
-        self._set_status(f"Pruned {deleted} backup(s).")
+        try:
+            deleted = self.backup_manager.prune_backups(
+                keep=keep,
+                include_pinned=include_pinned,
+                expected_ids=expected_ids,
+            )
+        except (OSError, ValueError, UnicodeError, RuntimeError) as err:
+            self._set_status(f"Prune failed: {err}")
+            return
+        if self._refresh_list():
+            self._set_status(f"Pruned {deleted} backup(s).")
 
     def action_back(self) -> None:
         self.app.pop_screen()

@@ -1,7 +1,8 @@
 """Backups screen standards-compliance tests."""
 
 from config import ConfigManager
-from tui.screens.backups import BackupActionBar, BackupDetail, BackupList, BackupsScreen
+from backup import BackupEntry
+from tui.screens.backups import BackupActionBar, BackupDetail, BackupList, BackupListItem, BackupsScreen
 from textual.containers import Container
 
 
@@ -30,12 +31,16 @@ class _FakeApp:
     def __init__(self):
         self.exited = False
         self.popped = False
+        self.pushed = []
 
     def exit(self):
         self.exited = True
 
     def pop_screen(self):
         self.popped = True
+
+    def push_screen(self, screen, callback=None):
+        self.pushed.append((screen, callback))
 
 
 def _bindings():
@@ -119,3 +124,113 @@ def test_backups_force_quit_calls_exit(monkeypatch):
     screen.action_force_quit()
 
     assert app.exited is True
+
+
+def _entry(backup_id="backup-id", pinned=False, created_at="2026-01-01T00:00:00"):
+    return BackupEntry(backup_id, f"{backup_id}.zip", "profile", "target", created_at, "success", pinned)
+
+
+def test_backup_rows_include_unambiguous_backup_id():
+    item = BackupListItem(_entry("backup-profile-unique"))
+    label = next(item.compose())
+    assert "backup-profile-unique" in label.render().plain
+
+
+def test_view_restore_and_pin_failures_are_visible(monkeypatch):
+    screen = BackupsScreen(ConfigManager())
+    status = _StatusRecorder()
+    app = _FakeApp()
+    screen._status_bar = status
+    monkeypatch.setattr(BackupsScreen, "app", property(lambda _self: app))
+    monkeypatch.setattr(screen, "_selected_backup", lambda: _entry())
+
+    class _BrokenManager:
+        def view_backup_contents(self, _backup_id):
+            raise OSError("zip unavailable")
+
+        def pin_backup(self, _backup_id):
+            raise OSError("registry read-only")
+
+    screen.backup_manager = _BrokenManager()
+    screen.action_view_backup()
+    assert "zip unavailable" in status.message
+    screen.action_restore_backup()
+    assert "zip unavailable" in status.message
+    screen.action_toggle_pin()
+    assert "registry read-only" in status.message
+
+
+def test_restore_confirmation_uses_selected_backup_id_and_reports_failure(monkeypatch):
+    screen = BackupsScreen(ConfigManager())
+    status = _StatusRecorder()
+    app = _FakeApp()
+    entry = _entry("restore-this")
+    screen._status_bar = status
+    monkeypatch.setattr(BackupsScreen, "app", property(lambda _self: app))
+    monkeypatch.setattr(screen, "_selected_backup", lambda: entry)
+
+    class _Manager:
+        def view_backup_contents(self, backup_id):
+            assert backup_id == entry.id
+            return [("a.txt", 1)]
+
+        def restore_backup(self, backup_id):
+            assert backup_id == entry.id
+            raise OSError("target is read-only")
+
+    screen.backup_manager = _Manager()
+    screen.action_restore_backup()
+    modal, callback = app.pushed[-1]
+    assert entry.id in modal._message
+    callback(True)
+    assert "target is read-only" in status.message
+
+
+def test_delete_confirmation_uses_selected_id_force_flag_and_reports_failure(monkeypatch):
+    screen = BackupsScreen(ConfigManager())
+    status = _StatusRecorder()
+    app = _FakeApp()
+    entry = _entry("pinned-id", pinned=True)
+    screen._status_bar = status
+    monkeypatch.setattr(BackupsScreen, "app", property(lambda _self: app))
+    monkeypatch.setattr(screen, "_selected_backup", lambda: entry)
+
+    class _Manager:
+        def delete_backup(self, backup_id, force=False):
+            assert backup_id == entry.id
+            assert force is True
+            raise OSError("delete denied")
+
+    screen.backup_manager = _Manager()
+    screen.action_delete_backup()
+    modal, callback = app.pushed[-1]
+    assert entry.id in modal._message
+    callback(True)
+    assert "delete denied" in status.message
+
+
+def test_prune_confirmation_aborts_when_candidate_set_changes(monkeypatch):
+    screen = BackupsScreen(ConfigManager())
+    status = _StatusRecorder()
+    app = _FakeApp()
+    entries = [
+        _entry("old", created_at="2026-01-01T00:00:00"),
+        _entry("new", created_at="2026-01-02T00:00:00"),
+    ]
+    screen._status_bar = status
+    monkeypatch.setattr(BackupsScreen, "app", property(lambda _self: app))
+
+    class _Manager:
+        def list_backups(self):
+            return entries
+
+        def prune_backups(self, keep, include_pinned, expected_ids):
+            assert expected_ids == {"old"}
+            raise RuntimeError("Backup candidates changed after preview")
+
+    screen.backup_manager = _Manager()
+    screen._preview_prune({"keep": 1, "include_pinned": False})
+    modal, callback = app.pushed[-1]
+    assert "old" in modal._message
+    callback(True)
+    assert "changed after preview" in status.message

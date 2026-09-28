@@ -58,10 +58,14 @@ class ThreadedSyncer:
                 cancel_event=self.cancel_event,
             )
             self.results = mcru.run()
-            self.on_complete(self.results, None)
         except Exception as e:
             self.error = e
-            self.on_complete(None, e)
+            self.results = getattr(e, "results", None)
+        try:
+            self.on_complete(self.results, self.error)
+        except RuntimeError:
+            # The app may have shut down before the worker posts its callback.
+            pass
 
     def is_running(self) -> bool:
         """Check if sync is still running."""

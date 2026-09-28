@@ -29,7 +29,7 @@ Use [docs/tui-screen-standards.md](docs/tui-screen-standards.md) as the source o
 
 ### Design Checklist
 
-- [x] ASCII art splash loaded from `.asciimtn` file with fallback
+- [x] Static splash uses the first frame from `.asciimtn` with a text fallback
 - [x] Version string displayed below art
 - [x] Subtitle/hint text displayed
 - [x] Command input field with placeholder
@@ -37,13 +37,15 @@ Use [docs/tui-screen-standards.md](docs/tui-screen-standards.md) as the source o
 - [x] Tab autocomplete on input
 - [x] Enter executes command from input or selected list item
 - [x] Routes to all feature screens
-- [x] `q` / `Ctrl+C` exits cleanly
+- [x] `q` from command entry (Enter) and `Ctrl+C` exit cleanly
 - [x] Input cleared after submission
 
-### Open Questions
+### Deferred Scope
 
-- [ ] Should command history (up/down in input) be wired up?
-- [ ] Should the animation actually cycle frames (timer-based)?
+- Command history is deferred; Up/Down browse the command list, not input history.
+- Splash frame cycling is deferred; the first frame remains static.
+- Alt+P/S/R/H/B/C route to screens; Alt+Q and Ctrl+C quit while command input has focus.
+- Unknown commands remain in the input and are reported in the Home status line.
 
 ---
 
@@ -80,6 +82,9 @@ Lazygit-inspired three-panel layout:
 - [x] `v` → verify paths on selected profile (result shown in status bar)
 - [x] `s` → cycle sort modes: saved order → name A→Z → name Z→A → newest first → oldest first
 - [x] `S` → persist current sort order to `profiles.json`
+- [x] `q` / `Escape` → back; `Ctrl+C` → quit
+- [x] `Ctrl+1/2/3`, `Alt+1/2/3`, `F1/F2/F3` → focus-only section navigation
+- [x] `Tab` / `Shift+Tab` → normal focus traversal; section keys are not task actions
 
 #### Add / Edit Form (Modal)
 - [x] Modal overlay (`ModalScreen`) — not a sub-screen
@@ -142,6 +147,8 @@ Lazygit-inspired three-panel layout (same pattern as Profiles screen):
 - [x] `e` → open Edit Suite form (name + description)
 - [x] `d` → delete selected suite (with confirmation)
 - [x] `m` → open Manage Profiles sub-screen for selected suite
+- [x] `q` / `Escape` → back; `Ctrl+C` → quit from screen and form/confirmation modals
+- [x] Main Suites screen has no section-focus bindings; there are no numbered sections to target
 
 #### Add / Edit Suite Form
 - [x] Modal overlay (consistent with Profiles screen)
@@ -160,6 +167,8 @@ Lazygit-inspired three-panel layout (same pattern as Profiles screen):
 - [x] `Tab` → switch focus between `[1]` and `[2]`
 - [x] `[` / `]` (or `shift+↑` / `shift+↓`) → reorder selected profile in `[1]`
 - [x] `Escape` → back to suite list (auto-saves order)
+- [x] `q` → back to suite list; `Ctrl+C` → quit
+- [x] `Ctrl+1/2/3`, `Alt+1/2/3`, `F1/F2/F3` → focus-only; section 3 reports that Actions is not focusable
 
 #### Edge Cases
 - [x] Empty suite → shows "(no profiles)" in manage view
@@ -186,34 +195,40 @@ Three-panel layout with phase-dependent content:
 
 #### Layout — Pre-Run (Selection)
 - [x] `[1] Profiles / Suites` panel — `ListView` selector; `Tab` toggles Profile / Suite mode
-- [x] `[2] Options` panel — dry-run checkbox, optional source/target/preset overrides
+- [x] `[2] Options` panel — dry-run, backup, and changelog controls plus optional source/target/preset overrides
 - [x] `[3] Actions` bar — `Space` start · `Tab` toggle mode · `Esc` back
 - [x] Status bar for validation feedback
-- [x] `Space` → begin sync
+- [x] Click Start or press `Space` to begin sync; Space on a focused checkbox toggles that option
 
 #### Layout — During Sync
 - [x] `[1] Progress` panel — current operation label and counter
 - [x] `[2] Details` panel — profile/suite name and start timestamp
 - [x] `[3] Actions` bar — cancel hint
-- [x] `Escape` / `Ctrl+C` → cancel sync (stop thread gracefully)
+- [x] `Escape` → request cooperative cancellation and keep the screen active until completion
+- [x] `Ctrl+C` → signal cancellation and close the TUI promptly without joining the worker on the UI thread
 
 #### Layout — Post-Run Summary
 - [x] `[1] Results` panel — counts: Added, Updated, Removed, Unchanged, Dirs added, Dirs removed, Errors
 - [x] `[2] Details` panel — profile/suite name, dry-run indicator, report path, backup/skipped details
 - [x] `[3] Actions` bar — `r` re-run · `Esc` back to selection
 - [x] Dry-run indicator shown prominently if applicable
+- [x] Classify outcomes as `success`, `partial`, `failed`, or `cancelled`; keep post-run failures visible as warnings
+- [x] Cancellation retains completed-operation results and states that completed changes were not rolled back
 
 #### Key Bindings
 - [x] `Escape` → cancel (during run) / back to selection (pre/post run)
 - [x] `Space` → start sync (pre-run state)
 - [x] `tab` → toggle Profile / Suite mode
 - [x] `r` → re-run (post-run state)
+- [x] `q` follows Escape/back behavior; Ctrl/Alt/F1–F3 section bindings are focus-only
 
 #### Threading
 - [x] `ThreadedSyncer` wraps `MCRU.run()` in a background thread
 - [x] Progress callbacks post to Textual message queue (thread-safe)
 - [x] Completion callback delivers result dict or exception to main thread
-- [x] Cancel support: set a stop event checked inside the thread
+- [x] Cancel support: signal a per-run event checked cooperatively by the worker
+- [x] Ctrl+C does not join the worker; the profile worker may remain until its current filesystem operation returns
+- [x] Cancellation does not roll back completed filesystem mutations
 
 #### Edge Cases
 - [x] No profiles/suites → empty selector with hint to create one
@@ -255,6 +270,10 @@ Lazygit-inspired three-panel layout:
 - [x] `Enter` / `v` → view selected report (full text)
 - [x] `d` → delete selected report (with confirmation)
 - [x] `p` → prune old reports (keep last N — with confirmation)
+- [x] `q` / `Escape` → back; Escape closes and clears an open search first; `q` types into a focused search field; `Ctrl+C` quits, including from modals
+- [x] `Ctrl+1/2/3`, `Alt+1/2/3`, `F1/F2/F3` → focus-only section navigation
+- [x] Search/filter input by name, inclusive from/to dates, and result type
+- [x] Result-type filter includes `success`, `partial`, `failed`, `cancelled`, and `unknown`
 
 #### Report Viewer Sub-screen
 - [x] Modal overlay (consistent with other screens)
@@ -264,8 +283,11 @@ Lazygit-inspired three-panel layout:
 
 #### Search / Filter
 - [x] Filter applies to profile/suite name column (case-insensitive substring)
-- [ ] Optional: filter by date range (start / end inputs)
+- [x] Filter by inclusive date range using from/to inputs
 - [x] Filter resets on `Escape` from search input
+- [x] Legacy reports without outcome metadata remain visible as `unknown`; outcomes are not inferred
+- [x] New profile/suite reports store explicit outcomes; report-generation paths remain unchanged
+- [x] Report reads/summaries run in workers; selection generations reject stale detail results
 
 #### Prune
 - [x] Confirmation prompt: "Keep last N reports? [10]"
@@ -279,6 +301,10 @@ Lazygit-inspired three-panel layout:
 ---
 
 ## 6. Backups Screen
+- [x] `q` → back; `Ctrl+C` → quit from screen and viewer/confirmation/prune modals
+- [x] `Ctrl+1/2/3`, `Alt+1/2/3`, `F1/F2/F3` → focus-only section navigation
+- [x] Prune confirms the previewed candidate set and aborts if it changes before deletion
+- [x] Backup actions are synchronous; I/O and ZIP failures are reported in the status bar
 
 **File:** `tui/screens/backups.py`
 **Status:** Implemented
@@ -337,6 +363,8 @@ Two-panel layout (content is mostly static display, not a navigable list):
 - [x] `[2] Actions` panel — quick action descriptions: open dir, view presets, reset presets, reset all
 - [x] `[3] Keys` bar — keybinding hints
 - [x] Status bar for transient feedback (reset results, errors)
+- [x] `q` / `Escape` → back; `Ctrl+C` → quit from screen and viewer/confirmation/reset modals
+- [x] `Ctrl+1/2/3`, `Alt+1/2/3`, `F1/F2/F3` → focus-only section navigation
 
 #### Key Bindings
 - [x] `Escape` → back to home
@@ -344,6 +372,9 @@ Two-panel layout (content is mostly static display, not a navigable list):
 - [x] `v` → view mapping presets
 - [x] `r` → reset presets (with confirmation)
 - [x] `R` → reset all (with strong confirmation)
+- [x] Startup parse/shape errors are visible as recovery-needed status; malformed source files are preserved
+- [x] Reset-all stages bundled defaults before replacing data and preserves existing data if staging fails
+- [x] Display the effective mapping path; disable preset reset for an external `MCRU_MAPPING_FILE` override
 
 #### View Mapping Presets
 - [x] Modal overlay (consistent with other screens)
@@ -368,13 +399,39 @@ Two-panel layout (content is mostly static display, not a navigable list):
 
 Resolved decisions carried forward from the Profiles screen. All future screens follow these patterns.
 
-- [x] **Layout pattern** — lazygit-inspired panels: numbered `[1] List`, `[2] Details`, `[3] Actions` bar; `Static` status bar docked to bottom. Applied to all screens.
+- [x] **Layout pattern** — where applicable, numbered `[1]` content, `[2]` details/options, and `[3]` Actions sections with a status bar. Home and the main Suites screen do not expose section navigation.
 - [x] **List widget** — `ListView` with name-only items in `[1]` panel; full detail rendered in `[2]` panel via `Static` (not `DataTable`)
 - [x] **Form style** — modal overlay (`ModalScreen`) for all add/edit forms
 - [x] **Confirmation style** — modal overlay for destructive actions; status bar for lightweight feedback (verify, sort results)
 - [x] **Status / notification bar** — `Static` widget docked to bottom; updated via `_set_status()`
 - [x] **Theme / color scheme** — Textual theme vars: `$primary`, `$surface`, `$text`, `$text-muted`, `$error`; panel borders use `solid $primary`
 - [x] **Error display** — validation errors inline within modal form; runtime errors in status bar
+
+## Cross-Screen Verification Evidence
+
+The baseline in [docs/tui-screen-standards.md](../tui-screen-standards.md) remains authoritative. `N/A` means the scenario is not part of that screen's workflow; it does not waive applicable success/error reporting or keybinding requirements.
+
+| Screen | Ctrl+C / `q` | Section focus and fallbacks | Tab behavior | Visible action hints |
+|--------|-------------|-----------------------------|--------------|----------------------|
+| Home | Pilot covers Ctrl+C/Alt+Q from command input; `q`, `quit`, `exit` + Enter quit | No numbered sections; Alt shortcuts route to screens | Autocomplete | Routes and quit are command actions; arrows browse the list |
+| Profiles | Pilot covers screen, add/edit, and delete confirmation; `q` / Escape back | Ctrl/Alt/F1–F3 bindings; focus-only Pilot coverage | Tab/Shift+Tab traverse focusable controls | CRUD, verify, sort, and save-sort actions only |
+| Suites | Pilot covers screen, form, confirmation, and Manage Profiles; `q` / Escape back | Main screen intentionally has no section keys; Manage Profiles has Ctrl/Alt/F1–F3 focus-only bindings | Manage Profiles Tab switches lists; main screen uses normal traversal | Add/edit/delete/manage and list actions only |
+| Run | Pilot covers active-run Ctrl+C cancellation/exit; `q` follows Escape/back | Ctrl/Alt/F1–F3 bindings; focus-only assertions | Tab switches Profile/Suite during selection | Start/cancel/rerun/back actions only |
+| Reports | Pilot covers screen and every viewer/confirmation/prune modal; Escape clears an open search, focused `q` is text | Ctrl/Alt/F1–F3 bindings and focus methods; detail focus exercised by Pilot | Normal focus traversal | Search/view/delete/prune actions only |
+| Backups | Pilot covers screen and every viewer/confirmation/prune modal; `q` / Escape back | Ctrl/Alt/F1–F3 bindings and focus-only methods | Normal focus traversal | View/restore/pin/delete/prune actions only |
+| Config | Pilot covers screen and every viewer/confirmation/reset modal; `q` / Escape back | Ctrl/Alt/F1–F3 bindings and focus-only methods | Normal focus traversal | Open/view/reset actions only |
+
+| Standards scenario | Run | Reports | Synchronous workflows |
+|--------------------|-----|---------|----------------------|
+| Success | Mounted phase transition and all four outcome classifications in `test_run_profile.py` | Persisted outcomes/counts and filters in `test_reports_screen.py` | Home/Profile/Suites/Config success paths are covered at screen level; backup success is covered by `test_backup.py`, while TUI backup tests cover identifiers, confirmations, and error status |
+| Cooperative cancellation / next-run stability | Mutation results and cancelled outcome are covered; cancel/back/new run proves a fresh unset cancellation event in `test_run_profile.py` | N/A — report reads are read-only workers, not cancellable run jobs | N/A — Home, Profiles, Suites, Backups, and Config do not start cancellable workers |
+| Post-step failure / partial outcome | Backup/report/changelog failure reaches `done` with warnings and `partial` in `test_run_profile.py` | N/A — no sync-run finalization occurs on Reports | N/A — these screens have no run post-steps; local failures are shown in status or forms |
+| Stale callback rejection | Stale progress/completion are ignored; post-shutdown callback is safe in `test_run_profile.py` | Selection-generation test rejects stale report detail in `test_reports_screen.py` | N/A — no asynchronous callbacks are started |
+| Fallback keys | Ctrl/Alt/F1–F3 presence and focus-only semantics in `test_run_profile.py` | Ctrl/Alt/F1–F3 bindings and focus methods in `test_reports_screen.py` | Per-screen binding/focus tests; Home and main Suites have no numbered sections |
+
+Synchronous CRUD/maintenance screens report operation success or failure through their existing status/form feedback; they do not use the Run screen's `selection` / `running` / `done` phases or worker tokens. Reports workers are limited to read/summary work and use a selection generation rather than a Run phase. These are applicability notes, not changes to the baseline.
+
+Windows Terminal manual smoke verification was not performed in this automated session. Key fallback, modal quit, navigation, and Run cancel/quit interactive checks remain pending.
 
 ---
 

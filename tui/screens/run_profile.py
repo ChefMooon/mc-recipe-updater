@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from textual.screen import Screen
 from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Static, ListView, ListItem, Label, Input, Checkbox
+from textual.widgets import Button, Static, ListView, ListItem, Label, Input, Checkbox
 from textual.binding import Binding
 from config import ConfigManager, GlobalConfig
 from backup import BackupManager
@@ -65,14 +65,16 @@ class TargetList(Container):
     }
     """
 
-    def __init__(self, mode: str, targets: list[str]):
-        super().__init__(id="section-1-panel")
+    def __init__(self, mode: str, targets: list[str], selected: str | None = None):
+        super().__init__(id="target-list-panel", classes="section-1-panel")
         self.mode = mode
         self.targets = targets
+        self.selected = selected
         self.border_title = f"[1] {'Profiles' if mode == 'profile' else 'Suites'}"
 
     def compose(self):
-        yield ListView(*self._build_items(), id="target-listview")
+        selected_index = self.targets.index(self.selected) if self.selected in self.targets else 0
+        yield ListView(*self._build_items(), id="target-listview", initial_index=selected_index)
 
     def update_targets(self, mode: str, targets: list[str]) -> None:
         self.mode = mode
@@ -115,7 +117,7 @@ class OptionsPanel(Container):
     """
 
     def __init__(self, backup_enabled: bool):
-        super().__init__(id="section-2-panel")
+        super().__init__(id="options-panel", classes="section-2-panel")
         self.border_title = "[2] Options"
         self.backup_enabled = backup_enabled
         self._detail = Static("Select a target to view details", id="target-detail")
@@ -151,7 +153,7 @@ class ProgressPanel(Container):
     """
 
     def __init__(self):
-        super().__init__(id="section-1-panel")
+        super().__init__(id="progress-panel", classes="section-1-panel")
         self.border_title = "[1] Progress"
         self._content = Static("Waiting to start", id="progress-content")
 
@@ -183,7 +185,7 @@ class ResultsPanel(Container):
     """
 
     def __init__(self):
-        super().__init__(id="section-1-panel")
+        super().__init__(id="results-panel", classes="section-1-panel")
         self.border_title = "[1] Results"
         self._content = Static("No run results yet", id="results-content")
 
@@ -214,8 +216,8 @@ class RunDetailPanel(Container):
     }
     """
 
-    def __init__(self):
-        super().__init__(id="section-2-panel")
+    def __init__(self, phase: str):
+        super().__init__(id=f"{phase}-details-panel", classes="section-2-panel")
         self.border_title = "[2] Details"
         self._content = Static("", id="run-detail-content")
 
@@ -234,12 +236,29 @@ class RunActionBar(Container):
     DEFAULT_CSS = """
     RunActionBar {
         width: 1fr;
-        height: 3;
+        height: 5;
         border: solid $primary;
         border-title-color: $text;
         border-title-style: bold;
         padding: 0 1;
         align: left middle;
+    }
+
+    RunActionBar #run-actions {
+        width: 1fr;
+        height: 3;
+    }
+
+    RunActionBar Button {
+        width: auto;
+        min-width: 10;
+        height: 3;
+        margin: 0 1 0 0;
+    }
+
+    RunActionBar #run-action-keys {
+        width: 1fr;
+        height: 1;
     }
     """
 
@@ -249,9 +268,12 @@ class RunActionBar(Container):
         self._content = Static("", id="run-action-keys")
 
     def compose(self):
-        yield self._content
+        with Horizontal(id="run-actions"):
+            yield Button("Start", id="start-run", variant="primary")
+            yield self._content
 
     def update_phase(self, phase: str) -> None:
+        self.query_one("#start-run", Button).display = phase == "selection"
         if phase == "running":
             text = (
                 "[bold dim]Esc[/bold dim]: Request cancel"
@@ -339,6 +361,7 @@ class RunProfileScreen(Screen):
         self._last_selection: str | None = None
         self._last_result: dict | None = None
         self._run_id: int = 0
+        self._shutdown_requested = False
         self._option_order = ["option-dry-run", "option-backup", "option-changelog", "option-source", "option-target", "option-mapping"]
         self._focused_option_index = 0
 
@@ -374,6 +397,10 @@ class RunProfileScreen(Screen):
         if isinstance(event.item, RunTargetItem):
             self._last_selection = event.item.target_name
             self._update_selected_detail()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "start-run":
+            self.action_start_run()
 
     def _target_names(self) -> list[str]:
         if self._mode == "profile":
@@ -444,9 +471,9 @@ class RunProfileScreen(Screen):
             config["target"] = options["target"]
         source = Path(config["source"])
         target = Path(config["target"])
-        if not source.exists():
+        if not source.is_dir():
             raise FileNotFoundError(f"Source folder does not exist: {source}")
-        if not target.exists():
+        if not target.is_dir():
             raise FileNotFoundError(f"Target folder does not exist: {target}")
         active_mapping = options.get("mapping") or config.get("mapping_preset")
         if active_mapping:
@@ -463,9 +490,10 @@ class RunProfileScreen(Screen):
 
     def _switch_to_running(self, target_name: str, mode: str, dry_run: bool) -> None:
         self._phase = "running"
+        self._last_selection = target_name
         self._started_at = datetime.now()
         self._progress_panel = ProgressPanel()
-        self._details_panel = RunDetailPanel()
+        self._details_panel = RunDetailPanel("progress")
         self._replace_main_panels(self._progress_panel, self._details_panel)
         if self._action_bar:
             self._action_bar.update_phase(self._phase)
@@ -481,7 +509,7 @@ class RunProfileScreen(Screen):
     def _switch_to_results(self, summary: str, details: str) -> None:
         self._phase = "done"
         self._results_panel = ResultsPanel()
-        self._details_panel = RunDetailPanel()
+        self._details_panel = RunDetailPanel("results")
         self._replace_main_panels(self._results_panel, self._details_panel)
         self._results_panel.update_results(summary)
         self._details_panel.update_detail(details)
@@ -493,7 +521,7 @@ class RunProfileScreen(Screen):
         self._syncer = None
         self._suite_cancel_event = None
         self._suite_thread = None
-        self._target_list = TargetList(self._mode, self._target_names())
+        self._target_list = TargetList(self._mode, self._target_names(), self._last_selection)
         self._options_panel = OptionsPanel(self.global_config.get("backup.enabled", True))
         self._replace_main_panels(self._target_list, self._options_panel)
         if self._action_bar:
@@ -521,15 +549,15 @@ class RunProfileScreen(Screen):
     def action_focus_section_1(self) -> None:
         if self._phase == "selection":
             if not self._focus_widget("#target-listview", ListView):
-                self._focus_widget("#section-1-panel", Container)
+                self._focus_widget(".section-1-panel", Container)
             return
-        self._focus_widget("#section-1-panel", Container)
+        self._focus_widget(".section-1-panel", Container)
 
     def action_focus_section_2(self) -> None:
         if self._phase == "selection":
             if self._focus_widget("#option-dry-run", Checkbox):
                 return
-        self._focus_widget("#section-2-panel", Container)
+        self._focus_widget(".section-2-panel", Container)
 
     def action_focus_section_3(self) -> None:
         if not self._focus_widget("#section-3-actions", RunActionBar):
@@ -647,7 +675,7 @@ class RunProfileScreen(Screen):
         self._syncer = ThreadedSyncer(
             config,
             dry_run=dry_run,
-            on_progress=lambda current, total, op: self.app.call_from_thread(
+            on_progress=lambda current, total, op: self._dispatch_to_app(
                 self._on_progress,
                 run_id,
                 current,
@@ -655,7 +683,7 @@ class RunProfileScreen(Screen):
                 op,
                 profile_name,
             ),
-            on_complete=lambda results, error: self.app.call_from_thread(
+            on_complete=lambda results, error: self._dispatch_to_app(
                 self._on_profile_complete,
                 run_id,
                 profile_name,
@@ -678,71 +706,124 @@ class RunProfileScreen(Screen):
             return
         options = self._option_values()
         run_id = self._next_run_id()
-        self._suite_cancel_event = threading.Event()
+        cancel_event = threading.Event()
+        self._suite_cancel_event = cancel_event
         self._switch_to_running(suite_name, "suite", options["dry_run"])
         self._suite_thread = threading.Thread(
             target=self._run_suite_worker,
-            args=(run_id, suite_name, suite, options),
+            args=(run_id, suite_name, suite, options, cancel_event),
             daemon=True,
         )
         self._suite_thread.start()
 
-    def _run_suite_worker(self, run_id: int, suite_name: str, suite: dict, options: dict) -> None:
+    def _run_suite_worker(
+        self,
+        run_id: int,
+        suite_name: str,
+        suite: dict,
+        options: dict,
+        cancel_event: threading.Event,
+    ) -> None:
         runs = []
         skipped = []
+        warnings = []
         report_path = None
         cancelled = False
         error = None
-        try:
-            for profile_name in suite.get("profiles", []):
-                if self._suite_cancel_event and self._suite_cancel_event.is_set():
-                    raise SyncCancelled("Sync cancelled.")
+        for profile_name in suite.get("profiles", []):
+            if cancel_event.is_set():
+                cancelled = True
+                error = SyncCancelled()
+                break
+            try:
+                config = self._prepare_profile_config(profile_name, options)
+            except Exception as err:
+                skipped.append((profile_name, str(err)))
+                continue
+            backup_id = None
+            if options["backup"] and not options["dry_run"]:
                 try:
-                    config = self._prepare_profile_config(profile_name, options)
-                except Exception as err:
-                    skipped.append((profile_name, str(err)))
+                    backup_id = self.backup_manager.create_backup(config["target"], profile_name)
+                except OSError as err:
+                    skipped.append((profile_name, f"Backup failed: {err}"))
                     continue
-                backup_id = None
-                if options["backup"] and not options["dry_run"]:
-                    try:
-                        backup_id = self.backup_manager.create_backup(config["target"], profile_name)
-                    except OSError as err:
-                        skipped.append((profile_name, f"Backup failed: {err}"))
-                        continue
-                try:
-                    mcru = MCRU(
-                        config,
-                        dry_run=options["dry_run"],
-                        progress_callback=lambda current, total, op, name=profile_name: self.app.call_from_thread(
-                            self._on_progress, run_id, current, total, op, name
-                        ),
-                        cancel_event=self._suite_cancel_event,
-                    )
-                    results = mcru.run()
-                except Exception:
-                    if backup_id:
-                        self.backup_manager.finalize_backup(backup_id, "failed")
-                    raise
+            try:
+                mcru = MCRU(
+                    config,
+                    dry_run=options["dry_run"],
+                    progress_callback=lambda current, total, op, name=profile_name: self._dispatch_to_app(
+                        self._on_progress, run_id, current, total, op, name
+                    ),
+                    cancel_event=cancel_event,
+                )
+                results = mcru.run()
+            except SyncCancelled as err:
+                results = err.results
+                runs.append((profile_name, config, results))
+                cancelled = True
+                error = err
                 if backup_id:
+                    try:
+                        self.backup_manager.finalize_backup(backup_id, "failed")
+                    except Exception as finalize_err:
+                        warnings.append(f"{profile_name} backup finalization failed: {finalize_err}")
+                break
+            except Exception as err:
+                error = err
+                if backup_id:
+                    try:
+                        self.backup_manager.finalize_backup(backup_id, "failed")
+                    except Exception as finalize_err:
+                        warnings.append(f"{profile_name} backup finalization failed: {finalize_err}")
+                break
+
+            runs.append((profile_name, config, results))
+            if backup_id:
+                try:
                     self.backup_manager.finalize_backup(backup_id, "success")
                     self.backup_manager.rotate_backups(self.global_config.get("backup.max_backups", 10))
-                if (options["changelog"] or config.get("target_changelog")) and not options["dry_run"]:
-                    try:
-                        TargetChangelogWriter(config["target"], profile_name).write(results, config)
-                    except Exception as err:
-                        skipped.append((profile_name, f"Changelog failed: {err}"))
-                runs.append((profile_name, config, results))
-            if runs:
-                try:
-                    report_path = SuiteReporter(suite_name, runs, dry_run=options["dry_run"]).save_report()
                 except Exception as err:
-                    skipped.append((suite_name, f"Report failed: {err}"))
-        except SyncCancelled as err:
-            cancelled = True
-            error = err
-        except Exception as err:
-            error = err
-        self.app.call_from_thread(self._on_suite_complete, run_id, suite_name, options, runs, skipped, report_path, cancelled, error)
+                    warnings.append(f"{profile_name} backup finalization/rotation failed: {err}")
+            if (options["changelog"] or config.get("target_changelog")) and not options["dry_run"]:
+                try:
+                    TargetChangelogWriter(config["target"], profile_name).write(results, config)
+                except Exception as err:
+                    warnings.append(f"{profile_name} changelog failed: {err}")
+
+        if runs:
+            try:
+                outcome = _classify_outcome(
+                    _aggregate_results([result for _, _, result in runs]),
+                    skipped,
+                    warnings,
+                    cancelled,
+                    error,
+                    bool(runs),
+                )
+                report_path = SuiteReporter(
+                    suite_name, runs, dry_run=options["dry_run"], outcome=outcome
+                ).save_report()
+            except Exception as err:
+                warnings.append(f"Suite report failed: {err}")
+        self._dispatch_to_app(
+            self._on_suite_complete,
+            run_id,
+            suite_name,
+            options,
+            runs,
+            skipped,
+            warnings,
+            report_path,
+            cancelled,
+            error,
+        )
+
+    def _dispatch_to_app(self, callback, *args) -> None:
+        try:
+            self.app.call_from_thread(callback, *args)
+        except RuntimeError:
+            # The worker may finish after Ctrl+C has shut down the app.
+            pass
 
     def _on_progress(self, run_id: int, current: int, total: int, operation: str, profile_name: str) -> None:
         if not self._is_active_run(run_id) or not self._progress_panel:
@@ -777,21 +858,37 @@ class RunProfileScreen(Screen):
     ) -> None:
         if not self._is_active_run(run_id):
             return
+        if isinstance(error, SyncCancelled) and results is None:
+            results = error.results
         report_path = None
         backup_status = "none"
         post_warnings: list[str] = []
         if backup_id:
             try:
                 self.backup_manager.finalize_backup(backup_id, "failed" if error else "success")
-                if not error:
-                    self.backup_manager.rotate_backups(self.global_config.get("backup.max_backups", 10))
                 backup_status = backup_id
-            except ValueError as err:
+            except Exception as err:
                 backup_status = f"finalize failed: {err}"
-                post_warnings.append(f"Backup finalize failed: {err}")
+                post_warnings.append(f"Backup finalization failed: {err}")
+            if not error:
+                try:
+                    self.backup_manager.rotate_backups(self.global_config.get("backup.max_backups", 10))
+                except Exception as err:
+                    backup_status = f"{backup_id} (rotation failed)"
+                    post_warnings.append(f"Backup rotation failed: {err}")
+        outcome = _classify_outcome(
+            results or _empty_result_summary(),
+            [],
+            post_warnings,
+            isinstance(error, SyncCancelled),
+            error if not isinstance(error, SyncCancelled) else None,
+            bool(results),
+        )
         if results and not error:
             try:
-                report_path = Reporter(profile_name, config, results, dry_run=options["dry_run"]).save_report()
+                report_path = Reporter(
+                    profile_name, config, results, dry_run=options["dry_run"], outcome=outcome
+                ).save_report()
             except Exception as err:
                 post_warnings.append(f"Report failed: {err}")
             if (options["changelog"] or config.get("target_changelog")) and not options["dry_run"]:
@@ -799,26 +896,23 @@ class RunProfileScreen(Screen):
                     TargetChangelogWriter(config["target"], profile_name).write(results, config)
                 except Exception as err:
                     post_warnings.append(f"Changelog failed: {err}")
+        outcome = _classify_outcome(
+            results or _empty_result_summary(),
+            [],
+            post_warnings,
+            isinstance(error, SyncCancelled),
+            error if not isinstance(error, SyncCancelled) else None,
+            bool(results),
+        )
         self._last_result = results
-        if error:
-            summary = "[red]Run failed[/red]"
-            if isinstance(error, SyncCancelled):
-                summary = "[yellow]Run cancelled[/yellow]"
-            details = str(error)
-        else:
-            summary = _format_result_summary(results)
-            details = _format_run_details(profile_name, "profile", options, report_path, backup_status, [], post_warnings)
-            if post_warnings:
-                summary = f"[yellow]Run completed with post-run warnings[/yellow]\n\n{summary}"
-        self._switch_to_results(summary, details)
+        summary = _format_outcome_summary(outcome, results)
+        if error and not isinstance(error, SyncCancelled):
+            summary += f"\n\n[red]{error}[/red]"
+        details = _format_run_details(profile_name, "profile", options, report_path, backup_status, [], post_warnings)
         if isinstance(error, SyncCancelled):
-            self._set_status("Run cancelled.")
-        elif error:
-            self._set_status(f"Run failed: {error}")
-        elif post_warnings:
-            self._set_status("Run complete with post-run warnings.")
-        else:
-            self._set_status("Run complete.")
+            details += f"\n\n[yellow]{error}[/yellow]"
+        self._switch_to_results(summary, details)
+        self._set_status(f"Run {outcome}." + (f" {error}" if error and not isinstance(error, SyncCancelled) else ""))
 
     def _on_suite_complete(
         self,
@@ -827,24 +921,21 @@ class RunProfileScreen(Screen):
         options: dict,
         runs: list,
         skipped: list,
+        warnings: list,
         report_path: str | None,
         cancelled: bool,
         error: Exception | None,
     ) -> None:
         if not self._is_active_run(run_id):
             return
-        if runs:
-            aggregate = _aggregate_results([result for _, _, result in runs])
-            summary = _format_result_summary(aggregate)
-        elif cancelled:
-            summary = "[yellow]Suite run cancelled[/yellow]"
-        else:
-            summary = "[red]No profiles ran successfully[/red]"
+        aggregate = _aggregate_results([result for _, _, result in runs]) if runs else _empty_result_summary()
+        outcome = _classify_outcome(aggregate, skipped, warnings, cancelled, error, bool(runs))
+        summary = _format_outcome_summary(outcome, aggregate)
         if error and not cancelled:
             summary += f"\n\n[red]{error}[/red]"
-        details = _format_run_details(suite_name, "suite", options, report_path, "per profile", skipped, [])
+        details = _format_run_details(suite_name, "suite", options, report_path, "per profile", skipped, warnings)
         self._switch_to_results(summary, details)
-        self._set_status("Suite run cancelled." if cancelled else "Suite run complete." if not error else f"Suite run failed: {error}")
+        self._set_status(f"Suite run {outcome}." + (f" {error}" if error and not cancelled else ""))
 
     def action_rerun(self) -> None:
         if self._phase != "done":
@@ -854,10 +945,7 @@ class RunProfileScreen(Screen):
 
     def action_back(self) -> None:
         if self._phase == "running":
-            if self._syncer:
-                self._syncer.cancel()
-            if self._suite_cancel_event:
-                self._suite_cancel_event.set()
+            self._request_cancellation()
             self._set_status("Cancellation requested.")
             return
         if self._phase == "done":
@@ -866,8 +954,19 @@ class RunProfileScreen(Screen):
         self.app.pop_screen()
 
     def action_force_quit(self) -> None:
-        """Immediately exit the app on Ctrl+C from the run screen."""
+        """Signal cancellation and exit without waiting for worker cleanup."""
+        if self._shutdown_requested:
+            return
+        self._shutdown_requested = True
+        self._request_cancellation()
+        self._next_run_id()
         self.app.exit()
+
+    def _request_cancellation(self) -> None:
+        if self._syncer:
+            self._syncer.cancel()
+        if self._suite_cancel_event:
+            self._suite_cancel_event.set()
 
 
 def _aggregate_results(results_list: list[dict]) -> dict:
@@ -896,6 +995,31 @@ def _format_result_summary(results: dict | None) -> str:
         lines.append("[bold red]Errors[/bold red]")
         for file_path, err in results.get("errors", [])[:10]:
             lines.append(f"{file_path}: {err}")
+    return "\n".join(lines)
+
+
+def _empty_result_summary() -> dict:
+    return {key: [] for key in ("added", "updated", "removed", "unchanged", "dirs_added", "dirs_removed", "errors")}
+
+
+def _classify_outcome(results: dict, skipped: list, warnings: list, cancelled: bool, error: Exception | None, ran: bool) -> str:
+    if cancelled:
+        return "cancelled"
+    mutations = sum(len(results.get(key, [])) for key in ("added", "updated", "removed", "dirs_added", "dirs_removed"))
+    if error:
+        return "partial" if mutations or ran else "failed"
+    if results.get("errors"):
+        return "partial" if mutations else "failed"
+    if warnings or skipped:
+        return "partial" if ran else "failed"
+    return "success"
+
+
+def _format_outcome_summary(outcome: str, results: dict | None) -> str:
+    color = {"success": "green", "partial": "yellow", "failed": "red", "cancelled": "yellow"}[outcome]
+    lines = [f"[bold {color}]Outcome: {outcome}[/bold {color}]", "", _format_result_summary(results)]
+    if outcome == "cancelled":
+        lines.extend(["", "[yellow]Completed changes were not rolled back.[/yellow]"])
     return "\n".join(lines)
 
 

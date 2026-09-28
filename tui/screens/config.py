@@ -1,9 +1,12 @@
 """Configuration and settings screen."""
 
 import json
+import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import uuid
 from pathlib import Path
 from typing import Any
 from textual.screen import Screen, ModalScreen
@@ -53,12 +56,13 @@ class PathsPanel(Container):
     def compose(self):
         yield self._content
 
-    def refresh_paths(self) -> None:
+    def refresh_paths(self, mapping_path: Path | None = None) -> None:
         paths = [
             ("Config dir", CONFIG_DIR),
             ("Profiles", CONFIG_FILE),
             ("Suites", SUITES_FILE),
             ("Mapping presets", DEFAULT_MAPPING_FILE),
+            ("Effective mapping", mapping_path or DEFAULT_MAPPING_FILE),
             ("Reports dir", REPORTS_DIR),
             ("Global config", GLOBAL_CONFIG_FILE),
             ("Backups dir", BACKUPS_DIR),
@@ -94,8 +98,8 @@ class ConfigActionsPanel(Container):
     def compose(self):
         yield self._content
 
-    def refresh_settings(self) -> None:
-        config = GlobalConfig().load()
+    def refresh_settings(self, global_config: GlobalConfig | None = None, reset_disabled: bool = False) -> None:
+        config = (global_config or GlobalConfig()).load()
         backup = config.get("backup", {})
         lines = [
             "[bold]Current settings[/bold]",
@@ -105,7 +109,7 @@ class ConfigActionsPanel(Container):
             "[bold]Quick actions[/bold]",
             "o  Open config directory",
             "v  View mapping presets",
-            "r  Reset mapping presets from bundled defaults",
+            "r  Reset mapping presets (disabled: external override)" if reset_disabled else "r  Reset mapping presets from bundled defaults",
             "R  Reset all ~/.mcru data",
         ]
         self._content.update("\n".join(lines))
@@ -130,11 +134,16 @@ class ConfigActionBar(Container):
         super().__init__(id="config-action-bar")
         self.can_focus = True
         self.border_title = "[3] Keys"
+        self._content = Static("")
 
     def compose(self):
-        yield Static(
+        yield self._content
+
+    def refresh_keys(self, reset_disabled: bool = False) -> None:
+        reset_label = "Reset presets (disabled)" if reset_disabled else "Reset presets"
+        self._content.update(
             "[bold green]o[/bold green]: Open dir  [bold cyan]v[/bold cyan]: View presets  "
-            "[bold yellow]r[/bold yellow]: Reset presets  [bold red]R[/bold red]: Reset all  "
+            f"[bold yellow]r[/bold yellow]: {reset_label}  [bold red]R[/bold red]: Reset all  "
             "[bold dim]Esc[/bold dim]: Back"
         )
 
@@ -142,7 +151,10 @@ class ConfigActionBar(Container):
 class TextViewerModal(ModalScreen[None]):
     """Scrollable text viewer modal."""
 
-    BINDINGS = [Binding("escape", "close", "Close", show=False)]
+    BINDINGS = [
+        Binding("escape", "close", "Close", show=False),
+        Binding("ctrl+c", "force_quit", "Quit", show=False, priority=True),
+    ]
 
     DEFAULT_CSS = """
     TextViewerModal {
@@ -179,11 +191,17 @@ class TextViewerModal(ModalScreen[None]):
     def action_close(self) -> None:
         self.dismiss(None)
 
+    def action_force_quit(self) -> None:
+        self.app.exit()
+
 
 class ConfirmModal(ModalScreen[bool]):
     """Confirmation modal."""
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=False),
+        Binding("ctrl+c", "force_quit", "Quit", show=False, priority=True),
+    ]
 
     DEFAULT_CSS = """
     ConfirmModal {
@@ -221,11 +239,17 @@ class ConfirmModal(ModalScreen[bool]):
     def action_cancel(self) -> None:
         self.dismiss(False)
 
+    def action_force_quit(self) -> None:
+        self.app.exit()
+
 
 class ResetAllModal(ModalScreen[bool]):
     """Typed confirmation for full config reset."""
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=False),
+        Binding("ctrl+c", "force_quit", "Quit", show=False, priority=True),
+    ]
 
     DEFAULT_CSS = """
     ResetAllModal {
@@ -266,6 +290,9 @@ class ResetAllModal(ModalScreen[bool]):
 
     def action_cancel(self) -> None:
         self.dismiss(False)
+
+    def action_force_quit(self) -> None:
+        self.app.exit()
 
 
 class ConfigScreen(Screen):
@@ -337,10 +364,22 @@ class ConfigScreen(Screen):
         self._refresh()
 
     def _refresh(self) -> None:
+        mapping_path = self.config_manager._resolve_mapping_file()
+        external_override = mapping_path != DEFAULT_MAPPING_FILE.resolve()
+        global_config = GlobalConfig()
         if self._paths_panel:
-            self._paths_panel.refresh_paths()
+            self._paths_panel.refresh_paths(mapping_path)
         if self._actions_panel:
-            self._actions_panel.refresh_settings()
+            self._actions_panel.refresh_settings(global_config, external_override)
+        try:
+            self.query_one("#config-action-bar", ConfigActionBar).refresh_keys(external_override)
+        except Exception:
+            pass
+        errors = list(self.config_manager.recovery_errors)
+        if global_config.load_error:
+            errors.append(f"Global settings were not loaded; {global_config.load_error}")
+        if errors:
+            self._set_status("Recovery needed: " + " | ".join(errors))
 
     def _set_status(self, message: str) -> None:
         if self._status_bar:
@@ -384,16 +423,22 @@ class ConfigScreen(Screen):
             self._set_status(f"Open failed: {err}")
 
     def action_view_presets(self) -> None:
+        mapping_path = self.config_manager._resolve_mapping_file()
         try:
-            data = json.loads(DEFAULT_MAPPING_FILE.read_text(encoding="utf-8"))
+            data = json.loads(mapping_path.read_text(encoding="utf-8"))
             content = json.dumps(data, indent=2)
         except json.JSONDecodeError as err:
             content = f"Mapping presets file is invalid JSON:\n\n{err}"
+        except UnicodeError as err:
+            content = f"Mapping presets file is not valid UTF-8:\n\n{err}"
         except OSError as err:
             content = f"Could not read mapping presets:\n\n{err}"
-        self.app.push_screen(TextViewerModal("Mapping Presets", content))
+        self.app.push_screen(TextViewerModal(f"Mapping Presets: {mapping_path}", content))
 
     def action_reset_presets(self) -> None:
+        if self._has_external_mapping_override():
+            self._set_status("Preset reset is disabled while MCRU_MAPPING_FILE points to an external mapping file.")
+            return
         self.app.push_screen(
             ConfirmModal("Reset Presets", f"Replace {DEFAULT_MAPPING_FILE} with bundled defaults?"),
             callback=self._on_reset_presets_confirmed,
@@ -403,17 +448,26 @@ class ConfigScreen(Screen):
         if not confirmed:
             self._set_status("Reset presets cancelled.")
             return
+        staged_path = None
+        status_message = "Mapping presets reset."
         try:
-            if DEFAULT_MAPPING_FILE.exists():
-                DEFAULT_MAPPING_FILE.unlink()
-            if BUNDLED_MAPPING_FILE.exists():
-                shutil.copy2(BUNDLED_MAPPING_FILE, DEFAULT_MAPPING_FILE)
-                self._set_status("Mapping presets reset.")
-            else:
-                self._set_status(f"Bundled presets missing: {BUNDLED_MAPPING_FILE}")
-        except OSError as err:
-            self._set_status(f"Reset presets failed: {err}")
+            payload = BUNDLED_MAPPING_FILE.read_text(encoding="utf-8")
+            json.loads(payload)
+            DEFAULT_MAPPING_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=DEFAULT_MAPPING_FILE.parent, delete=False) as staged:
+                staged.write(payload)
+                staged_path = Path(staged.name)
+            staged_path.replace(DEFAULT_MAPPING_FILE)
+        except (OSError, UnicodeError, json.JSONDecodeError) as err:
+            status_message = f"Reset presets failed: {err}"
+        finally:
+            if staged_path and staged_path.exists():
+                try:
+                    staged_path.unlink()
+                except OSError as err:
+                    status_message = f"Preset reset staging cleanup failed: {err}"
         self._refresh()
+        self._set_status(status_message)
 
     def action_reset_all(self) -> None:
         self.app.push_screen(ResetAllModal(), callback=self._on_reset_all_confirmed)
@@ -422,22 +476,51 @@ class ConfigScreen(Screen):
         if not confirmed:
             self._set_status("Reset all cancelled.")
             return
+        staged_dir = None
+        previous_dir = None
+        status_message = "All mcru configuration reset."
         try:
+            mapping_text = BUNDLED_MAPPING_FILE.read_text(encoding="utf-8")
+            json.loads(mapping_text)
+            CONFIG_DIR.parent.mkdir(parents=True, exist_ok=True)
+            staged_dir = Path(tempfile.mkdtemp(prefix=f"{CONFIG_DIR.name}-reset-", dir=CONFIG_DIR.parent))
+            (staged_dir / CONFIG_FILE.name).write_text(json.dumps({"profiles": []}, indent=2), encoding="utf-8")
+            (staged_dir / SUITES_FILE.name).write_text(json.dumps({"suites": []}, indent=2), encoding="utf-8")
+            (staged_dir / GLOBAL_CONFIG_FILE.name).write_text(json.dumps(GlobalConfig.DEFAULT_CONFIG, indent=2), encoding="utf-8")
+            (staged_dir / DEFAULT_MAPPING_FILE.name).write_text(mapping_text, encoding="utf-8")
+
             if CONFIG_DIR.exists():
-                shutil.rmtree(CONFIG_DIR)
-            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            CONFIG_FILE.write_text(json.dumps({"profiles": []}, indent=2), encoding="utf-8")
-            SUITES_FILE.write_text(json.dumps({"suites": []}, indent=2), encoding="utf-8")
-            if BUNDLED_MAPPING_FILE.exists():
-                shutil.copy2(BUNDLED_MAPPING_FILE, DEFAULT_MAPPING_FILE)
-            GlobalConfig()
+                previous_dir = CONFIG_DIR.with_name(f"{CONFIG_DIR.name}-previous-{uuid.uuid4().hex}")
+                CONFIG_DIR.replace(previous_dir)
+            try:
+                staged_dir.replace(CONFIG_DIR)
+                staged_dir = None
+            except OSError:
+                if previous_dir and previous_dir.exists():
+                    previous_dir.replace(CONFIG_DIR)
+                    previous_dir = None
+                raise
+
             self.config_manager = ConfigManager()
             if hasattr(self.app, "config_manager"):
                 self.app.config_manager = self.config_manager
-            self._set_status("All mcru configuration reset.")
-        except OSError as err:
-            self._set_status(f"Reset all failed: {err}")
+        except (OSError, UnicodeError, json.JSONDecodeError) as err:
+            status_message = f"Reset all failed; existing data was preserved: {err}"
+        finally:
+            if staged_dir and staged_dir.exists():
+                shutil.rmtree(staged_dir, ignore_errors=True)
+        if previous_dir and previous_dir.exists():
+            try:
+                shutil.rmtree(previous_dir)
+            except OSError as err:
+                status_message = f"Reset completed; old data remains at {previous_dir}: {err}"
         self._refresh()
+        self._set_status(status_message)
+
+    def _has_external_mapping_override(self) -> bool:
+        return bool(os.getenv("MCRU_MAPPING_FILE")) and (
+            self.config_manager._resolve_mapping_file() != DEFAULT_MAPPING_FILE.resolve()
+        )
 
     def action_back(self) -> None:
         self.app.pop_screen()

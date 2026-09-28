@@ -1,10 +1,13 @@
 """Reports browser screen."""
 
+import asyncio
+import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from textual.screen import Screen, ModalScreen
 from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Static, ListView, ListItem, Label, Input
+from textual.widgets import Static, ListView, ListItem, Label, Input, Select
 from textual.binding import Binding
 from config import ConfigManager, ReportManager
 from tui.utils import format_bytes
@@ -19,7 +22,15 @@ class ReportListItem(ListItem):
 
     def compose(self):
         timestamp = self.report["timestamp"].strftime("%Y-%m-%d %H:%M") if self.report.get("timestamp") else "unknown"
-        yield Label(f"{timestamp}  {self.report['name']}")
+        counts = self.report.get("counts", {})
+        count_text = " ".join(
+            f"{label}:{counts.get(key, '?')}"
+            for key, label in (
+                ("added", "A"), ("updated", "U"), ("removed", "R"),
+                ("unchanged", "="), ("dirs added", "DA"), ("dirs removed", "DR"), ("errors", "E"),
+            )
+        )
+        yield Label(f"{timestamp}  {self.report['name']}  {self.report.get('outcome', 'unknown')}  {count_text}")
 
 
 class ReportList(Container):
@@ -103,7 +114,7 @@ class ReportDetail(Container):
     def compose(self):
         yield self._content
 
-    def update_detail(self, report: dict | None) -> None:
+    def update_detail(self, report: dict | None, text: str | None = None, error: str | None = None) -> None:
         if report is None:
             self._content.update("[dim]Select a report to view details[/dim]")
             return
@@ -113,14 +124,21 @@ class ReportDetail(Container):
             f"[bold dim]{'Name:':<12}[/bold dim] {report['name']}",
             f"[bold dim]{'File:':<12}[/bold dim] {report['filename']}",
             f"[bold dim]{'Date:':<12}[/bold dim] {timestamp}",
+            f"[bold dim]{'Outcome:':<12}[/bold dim] {report.get('outcome', 'unknown')}",
             f"[bold dim]{'Size:':<12}[/bold dim] {format_bytes(report['size'])}",
-            "",
         ]
-        try:
-            text = path.read_text(encoding="utf-8")
+        counts = report.get("counts", {})
+        count_labels = (
+            ("added", "added"), ("updated", "updated"), ("removed", "removed"),
+            ("unchanged", "unchanged"), ("dirs added", "dirs added"),
+            ("dirs removed", "dirs removed"), ("errors", "errors"),
+        )
+        lines.append("[bold dim]Counts:     [/bold dim] " + ", ".join(f"{label} {counts.get(key, '?')}" for key, label in count_labels))
+        lines.append("")
+        if error:
+            lines.append(f"[red]Could not read report: {error}[/red]")
+        elif text is not None:
             lines.extend(_summarize_report_text(text))
-        except OSError as err:
-            lines.append(f"[red]Could not read report: {err}[/red]")
         self._content.update("\n".join(lines))
 
 
@@ -154,7 +172,10 @@ class ReportActionBar(Container):
 class TextViewerModal(ModalScreen[None]):
     """Scrollable text viewer modal."""
 
-    BINDINGS = [Binding("escape", "close", "Close", show=False)]
+    BINDINGS = [
+        Binding("escape", "close", "Close", show=False),
+        Binding("ctrl+c", "force_quit", "Quit", show=False, priority=True),
+    ]
 
     DEFAULT_CSS = """
     TextViewerModal {
@@ -191,11 +212,17 @@ class TextViewerModal(ModalScreen[None]):
     def action_close(self) -> None:
         self.dismiss(None)
 
+    def action_force_quit(self) -> None:
+        self.app.exit()
+
 
 class ConfirmModal(ModalScreen[bool]):
     """Confirmation modal."""
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=False),
+        Binding("ctrl+c", "force_quit", "Quit", show=False, priority=True),
+    ]
 
     DEFAULT_CSS = """
     ConfirmModal {
@@ -233,11 +260,17 @@ class ConfirmModal(ModalScreen[bool]):
     def action_cancel(self) -> None:
         self.dismiss(False)
 
+    def action_force_quit(self) -> None:
+        self.app.exit()
+
 
 class PruneReportsModal(ModalScreen[int | None]):
     """Prompt for report prune keep count."""
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=False),
+        Binding("ctrl+c", "force_quit", "Quit", show=False, priority=True),
+    ]
 
     DEFAULT_CSS = """
     PruneReportsModal {
@@ -283,6 +316,9 @@ class PruneReportsModal(ModalScreen[int | None]):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+    def action_force_quit(self) -> None:
+        self.app.exit()
 
 
 def _summarize_report_text(text: str) -> list[str]:
@@ -366,11 +402,27 @@ class ReportsScreen(Screen):
         self._detail_panel: ReportDetail | None = None
         self._status_bar: Static | None = None
         self._pending_delete_path: Path | None = None
+        self._report_generation = 0
+        self._list_generation = 0
+        self._date_from = ""
+        self._date_to = ""
+        self._outcome_filter = "all"
 
     def compose(self):
         self._reports = self._load_reports()
         with Vertical(id="reports-layout"):
             yield Input(placeholder="Filter reports by profile or suite name", id="search-input")
+            with Horizontal(id="report-filters"):
+                yield Input(placeholder="From YYYY-MM-DD", id="date-from")
+                yield Input(placeholder="To YYYY-MM-DD", id="date-to")
+                yield Select(
+                    [(label, value) for value, label in [
+                        ("all", "All outcomes"), ("success", "Success"), ("partial", "Partial"),
+                        ("failed", "Failed"), ("cancelled", "Cancelled"), ("unknown", "Unknown"),
+                    ]],
+                    value="all",
+                    id="outcome-filter",
+                )
             with Horizontal(id="panels-row"):
                 self._report_list = ReportList(self._reports, self._filter)
                 yield self._report_list
@@ -382,24 +434,51 @@ class ReportsScreen(Screen):
 
     def on_mount(self) -> None:
         self.query_one("#search-input", Input).display = False
-        if self._reports:
-            self._show_report(0)
-            self.query_one("#report-listview", ListView).focus()
+        self._refresh_list()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "search-input":
             self._filter = event.value.strip()
             self._refresh_list()
+        elif event.input.id == "date-from":
+            self._date_from = event.value.strip()
+            self._refresh_list()
+        elif event.input.id == "date-to":
+            self._date_to = event.value.strip()
+            self._refresh_list()
 
-    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == "outcome-filter":
+            self._outcome_filter = str(event.value)
+            self._refresh_list()
+
+    async def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         if isinstance(event.item, ReportListItem) and self._detail_panel:
-            self._detail_panel.update_detail(event.item.report)
+            self._report_generation += 1
+            generation = self._report_generation
+            report = event.item.report
+            text, error = await asyncio.to_thread(self._read_report, report["path"])
+            if generation == self._report_generation and self._detail_panel:
+                self._detail_panel.update_detail(report, text, error)
 
     def _load_reports(self) -> list[dict]:
         reports = self.report_manager.list_reports(sort_by="date")
+        for report in reports:
+            text, error = self._read_report(report["path"])
+            report.update(_report_metadata(text) if text is not None else {"outcome": "unknown", "counts": {}})
+            if error:
+                report["read_error"] = error
         if self._filter:
             query = self._filter.lower()
             reports = [r for r in reports if query in (r.get("name") or "").lower()]
+        start_date = _parse_filter_date(self._date_from)
+        end_date = _parse_filter_date(self._date_to)
+        if start_date:
+            reports = [r for r in reports if r.get("timestamp") and r["timestamp"].date() >= start_date]
+        if end_date:
+            reports = [r for r in reports if r.get("timestamp") and r["timestamp"].date() <= end_date]
+        if self._outcome_filter != "all":
+            reports = [r for r in reports if r.get("outcome", "unknown") == self._outcome_filter]
         return reports
 
     def _show_report(self, index: int) -> None:
@@ -414,16 +493,31 @@ class ReportsScreen(Screen):
         return item.report if isinstance(item, ReportListItem) else None
 
     def _refresh_list(self) -> None:
-        self._reports = self._load_reports()
+        self._list_generation += 1
+        self._report_generation += 1
+        generation = self._list_generation
+        if self.is_mounted:
+            self.run_worker(self._refresh_reports(generation), exclusive=True)
+
+    async def _refresh_reports(self, generation: int) -> None:
+        try:
+            reports = await asyncio.to_thread(self._load_reports)
+        except (OSError, UnicodeError) as err:
+            if generation == self._list_generation:
+                self._set_status(f"Could not list reports: {err}")
+            return
+        if generation != self._list_generation:
+            return
+        self._reports = reports
         if self._report_list:
-            self._report_list.remove()
+            await self._report_list.remove()
         row = self.query_one("#panels-row", Horizontal)
         self._report_list = ReportList(self._reports, self._filter)
-        row.mount(self._report_list, before=self._detail_panel)
+        await row.mount(self._report_list, before=self._detail_panel)
         if self._reports:
-            self._show_report(0)
             try:
                 self.query_one("#report-listview", ListView).focus()
+                self.query_one("#report-listview", ListView).index = 0
             except Exception:
                 pass
         elif self._detail_panel:
@@ -462,14 +556,19 @@ class ReportsScreen(Screen):
         search.focus()
 
     def action_view_report(self) -> None:
+        self.run_worker(self._view_report(), exclusive=True)
+
+    async def _view_report(self) -> None:
         report = self._selected_report()
         if not report:
             self._set_status("No report selected.")
             return
-        try:
-            content = report["path"].read_text(encoding="utf-8")
-        except OSError as err:
-            self._set_status(f"Could not read report: {err}")
+        generation = self._report_generation
+        content, error = await asyncio.to_thread(self._read_report, report["path"])
+        if generation != self._report_generation:
+            return
+        if error:
+            self._set_status(f"Could not read report: {error}")
             return
         self.app.push_screen(TextViewerModal(report["filename"], content))
 
@@ -504,7 +603,11 @@ class ReportsScreen(Screen):
         if keep_count is None:
             self._set_status("Prune cancelled.")
             return
-        result = self.report_manager.prune_reports(keep_count=keep_count, dry_run=True)
+        try:
+            result = self.report_manager.prune_reports(keep_count=keep_count, dry_run=True)
+        except (OSError, UnicodeError) as err:
+            self._set_status(f"Prune preview failed: {err}")
+            return
         paths = result["deleted"]
         if not paths:
             self._set_status(f"No reports to prune when keeping {keep_count}.")
@@ -522,9 +625,20 @@ class ReportsScreen(Screen):
         if not confirmed:
             self._set_status("Prune cancelled.")
             return
-        result = self.report_manager.prune_reports(keep_count=keep_count, dry_run=False)
+        try:
+            result = self.report_manager.prune_reports(keep_count=keep_count, dry_run=False)
+        except (OSError, UnicodeError) as err:
+            self._set_status(f"Prune failed: {err}")
+            return
         self._refresh_list()
         self._set_status(f"Pruned {len(result['deleted'])} report(s).")
+
+    @staticmethod
+    def _read_report(path: Path) -> tuple[str | None, str | None]:
+        try:
+            return path.read_text(encoding="utf-8"), None
+        except (OSError, UnicodeError) as err:
+            return None, str(err)
 
     def action_back(self) -> None:
         search = self.query_one("#search-input", Input)
@@ -535,3 +649,28 @@ class ReportsScreen(Screen):
             self._refresh_list()
             return
         self.app.pop_screen()
+
+
+def _parse_filter_date(value: str):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _report_metadata(text: str) -> dict:
+    outcome_match = re.search(r"^Outcome\s*:\s*(success|partial|failed|cancelled)\s*$", text, re.MULTILINE | re.IGNORECASE)
+    suite_labels = {
+        "added": "Added", "updated": "Updated", "removed": "Removed", "unchanged": "Unchanged",
+        "dirs added": "Dirs added", "dirs removed": "Dirs removed", "errors": "Errors",
+    }
+    counts = {}
+    for key, suite_label in suite_labels.items():
+        profile_count = re.search(rf"^{re.escape(key)}\s*\((\d+)\)", text, re.MULTILINE | re.IGNORECASE)
+        suite_count = re.search(rf"^{re.escape(suite_label)}\s*:\s*(\d+)", text, re.MULTILINE | re.IGNORECASE)
+        match = profile_count or suite_count
+        if match:
+            counts[key] = int(match.group(1))
+    return {"outcome": outcome_match.group(1).lower() if outcome_match else "unknown", "counts": counts}

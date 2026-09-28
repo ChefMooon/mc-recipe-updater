@@ -24,6 +24,21 @@ from registry import get_parser
 class SyncCancelled(Exception):
     """Raised when a sync run is cancelled between file operations."""
 
+    def __init__(self, message: str = "Sync cancelled.", results: dict | None = None):
+        super().__init__(message)
+        self.results = _copy_results(results or _empty_results())
+
+
+def _empty_results() -> dict:
+    return {
+        "added": [], "updated": [], "removed": [], "unchanged": [],
+        "dirs_added": [], "dirs_removed": [], "errors": [],
+    }
+
+
+def _copy_results(results: dict) -> dict:
+    return {key: list(results.get(key, [])) for key in _empty_results()}
+
 
 class MCRU:
     # Files at the root of the target that are never removed, regardless of source contents.
@@ -44,12 +59,14 @@ class MCRU:
         self.dry_run = dry_run
         self.progress_callback = progress_callback or (lambda current, total, operation: None)
         self.cancel_event = cancel_event
+        self._partial_results = _empty_results()
 
         if not self.source.exists():
             raise FileNotFoundError(f"Source folder not found: {self.source}")
 
     def run(self) -> dict:
         """Run the full compare + sync pipeline. Returns a results dict."""
+        self._partial_results = _empty_results()
         self._check_cancel()
         if self.mapping:
             return self._run_with_mapping()
@@ -61,7 +78,7 @@ class MCRU:
 
     def _check_cancel(self) -> None:
         if self.cancel_event is not None and self.cancel_event.is_set():
-            raise SyncCancelled("Sync cancelled.")
+            raise SyncCancelled("Sync cancelled.", self._partial_results)
 
     def _run_default(self) -> dict:
         """Run legacy sync behavior with direct source/target path mirroring."""
@@ -75,7 +92,7 @@ class MCRU:
         to_add = []       # in source, missing from target
         to_update = []    # in both, but content differs
         to_remove = []    # in target, not in source
-        unchanged = []    # identical in both
+        unchanged = self._partial_results["unchanged"]
 
         # Compare source → target
         total_source = len(source_files)
@@ -101,10 +118,10 @@ class MCRU:
                 to_remove.append(rel_path)
 
         # Apply changes
-        applied_add = []
-        applied_update = []
-        applied_remove = []
-        errors = []
+        applied_add = self._partial_results["added"]
+        applied_update = self._partial_results["updated"]
+        applied_remove = self._partial_results["removed"]
+        errors = self._partial_results["errors"]
 
         for index, rel_path in enumerate(to_add, 1):
             self._check_cancel()
@@ -137,8 +154,8 @@ class MCRU:
                 errors.append((rel_path, str(e)))
 
         # ── Directory sync ───────────────────────────────────────────
-        dirs_added = []
-        dirs_removed = []
+        dirs_added = self._partial_results["dirs_added"]
+        dirs_removed = self._partial_results["dirs_removed"]
 
         source_dirs = self._scan_all_dirs(self.source)
         self._check_cancel()
@@ -188,6 +205,7 @@ class MCRU:
                     except Exception as e:
                         errors.append((rel_dir + "/", str(e)))
 
+        self._check_cancel()
         self._progress(1, 1, "Complete")
         return {
             "added": applied_add,
@@ -212,7 +230,7 @@ class MCRU:
         to_add = []
         to_update = []
         to_remove = []
-        unchanged = []
+        unchanged = self._partial_results["unchanged"]
 
         total_mapped = len(source_to_target)
         for index, (target_rel, source_rel) in enumerate(source_to_target.items(), 1):
@@ -239,10 +257,10 @@ class MCRU:
             ):
                 to_remove.append(rel_path)
 
-        applied_add = []
-        applied_update = []
-        applied_remove = []
-        errors = []
+        applied_add = self._partial_results["added"]
+        applied_update = self._partial_results["updated"]
+        applied_remove = self._partial_results["removed"]
+        errors = self._partial_results["errors"]
 
         for index, target_rel in enumerate(to_add, 1):
             self._check_cancel()
@@ -276,6 +294,7 @@ class MCRU:
             except Exception as e:
                 errors.append((target_rel, str(e)))
 
+        self._check_cancel()
         self._progress(1, 1, "Complete")
         return {
             "added": applied_add,
