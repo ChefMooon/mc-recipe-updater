@@ -872,6 +872,7 @@ def test_suite_worker_reports_incomplete_rollback_and_keeps_backup_failed(monkey
     finalized = []
     rotated = []
     outcomes = []
+    reporter_options = []
     completion = []
     captured = {}
 
@@ -895,6 +896,7 @@ def test_suite_worker_reports_incomplete_rollback_and_keeps_backup_failed(monkey
     class _SuiteReporter:
         def __init__(self, _name, _runs, dry_run=False, outcome="success"):
             outcomes.append(outcome)
+            reporter_options.append({"dry_run": dry_run, "outcome": outcome})
 
         def save_report(self):
             return "suite-report.txt"
@@ -924,6 +926,7 @@ def test_suite_worker_reports_incomplete_rollback_and_keeps_backup_failed(monkey
     )
 
     assert outcomes == ["partial"]
+    assert reporter_options == [{"dry_run": False, "outcome": "partial"}]
     assert finalized == [("backup-selected", "failed")]
     assert rotated == []
     completion[0][0](*completion[0][1])

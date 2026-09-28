@@ -231,6 +231,16 @@ def test_reporters_persist_all_selected_outcomes_without_inferring_legacy(tmp_pa
     suite_text = Path(suite_path).read_text(encoding="utf-8")
     assert "Outcome  : cancelled" in suite_text
     assert set(_report_metadata(suite_text)["counts"].values()) == {0}
+    skipped_suite_path = SuiteReporter(
+        "incomplete-suite",
+        [],
+        outcome="failed",
+        skipped_members=[("missing-profile", "Profile not found")],
+    ).save_report()
+    skipped_suite_text = Path(skipped_suite_path).read_text(encoding="utf-8")
+    assert "Outcome  : failed" in skipped_suite_text
+    assert "Skipped profiles (1):" in skipped_suite_text
+    assert "missing-profile: Profile not found" in skipped_suite_text
     legacy_path = tmp_path / "legacy_20260101_000000.txt"
     legacy_path.write_text("Added (0):\n", encoding="utf-8")
     monkeypatch.setattr(config_module, "REPORTS_DIR", tmp_path)

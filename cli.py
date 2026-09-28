@@ -60,7 +60,16 @@ def _result_outcome(results: dict) -> str:
     return "success"
 
 
-def _suite_outcome(runs: list[tuple[str, dict, dict]]) -> str:
+def _suite_outcome(
+    runs: list[tuple[str, dict, dict]],
+    skipped_members: list[tuple[str, str]] | None = None,
+    failed_members: list[tuple[str, str]] | None = None,
+) -> str:
+    if not runs:
+        return "failed"
+    if skipped_members or failed_members:
+        return "partial"
+
     results = [result for _, _, result in runs]
     if any(result.get("rollback_complete") is False for result in results):
         return "partial"
@@ -1033,13 +1042,15 @@ def run(profile, dry_run, no_report, backup_override, source, target, mapping, t
 
         if not suite["profiles"]:
             click.echo("⚠️  Suite has no profiles. Add some with 'mcru suite add-profile'.")
-            return
 
         runs = []
+        skipped_members = []
+        failed_members = []
         for pname in suite["profiles"]:
             pcfg = cm.get_profile(pname)
             if pcfg is None:
                 click.echo(f"  ⚠️  Profile '{pname}' not found — skipping.")
+                skipped_members.append((pname, "Profile not found"))
                 continue
 
             if source:
@@ -1050,6 +1061,7 @@ def run(profile, dry_run, no_report, backup_override, source, target, mapping, t
             target_path = Path(pcfg["target"])
             if not target_path.exists():
                 click.echo(f"  ❌  {pname}: Target folder does not exist: {pcfg['target']} — skipping.")
+                skipped_members.append((pname, f"Target folder does not exist: {pcfg['target']}"))
                 continue
 
             active_mapping = mapping or pcfg.get("mapping_preset")
@@ -1058,6 +1070,7 @@ def run(profile, dry_run, no_report, backup_override, source, target, mapping, t
                     pcfg["mapping"] = cm.get_mapping_preset(active_mapping)
                 except (FileNotFoundError, ValueError) as err:
                     click.echo(f"  ⚠️  Profile '{pname}' mapping error: {err} — skipping.")
+                    skipped_members.append((pname, f"Mapping error: {err}"))
                     continue
                 pcfg["mapping_preset"] = active_mapping
 
@@ -1071,6 +1084,7 @@ def run(profile, dry_run, no_report, backup_override, source, target, mapping, t
                 mcru = MCRU(pcfg, dry_run=dry_run)
             except (OSError, ValueError) as err:
                 click.echo(f"  ❌  Profile '{pname}' has invalid sync paths: {err} — skipping.")
+                skipped_members.append((pname, f"Invalid sync paths: {err}"))
                 continue
 
             # Create backup if enabled
@@ -1082,12 +1096,14 @@ def run(profile, dry_run, no_report, backup_override, source, target, mapping, t
                     click.echo(f"  ⚠️  {pname}: Backup failed: {err}")
                     if not click.confirm("  Continue without backup?", default=True):
                         click.echo(f"  ❌  Aborted.")
+                        skipped_members.append((pname, f"Backup failed: {err}; user chose not to continue"))
                         continue
 
             try:
                 results = mcru.run()
             except (OSError, ValueError) as err:
-                click.echo(f"  ❌  {pname}: {err} — skipping.")
+                click.echo(f"  ❌  {pname}: {err} — failed.")
+                failed_members.append((pname, str(err)))
                 if backup_id:
                     bm.finalize_backup(backup_id, "failed")
                 continue
@@ -1104,12 +1120,15 @@ def run(profile, dry_run, no_report, backup_override, source, target, mapping, t
                 writer = TargetChangelogWriter(pcfg["target"], pname)
                 writer.write(results, pcfg)
 
-        if not runs:
-            click.echo("\n❌  No profiles ran successfully.")
-            return
-
-        outcome = _suite_outcome(runs)
-        suite_reporter = SuiteReporter(profile, runs, dry_run=dry_run, outcome=outcome)
+        outcome = _suite_outcome(runs, skipped_members, failed_members)
+        suite_reporter = SuiteReporter(
+            profile,
+            runs,
+            dry_run=dry_run,
+            outcome=outcome,
+            skipped_members=skipped_members,
+            failed_members=failed_members,
+        )
         suite_reporter.print_summary()
 
         if not no_report:

@@ -156,7 +156,11 @@ class ConfigManager:
         self.profiles = [p for p in self.profiles if p["name"] != name]
         if len(self.profiles) == before:
             raise ValueError(f"Profile '{name}' not found.")
+        for suite in self.suites:
+            suite_profiles = suite.get("profiles", [])
+            suite["profiles"] = [profile_name for profile_name in suite_profiles if profile_name != name]
         self._save()
+        self._save_suites()
 
     def rename_profile(self, old_name: str, new_name: str):
         """Rename a profile and update all suite references.

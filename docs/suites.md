@@ -108,6 +108,9 @@ mcru suite remove-profile <suite> <profile>
 ```
 Removes the profile from the suite. The profile itself is not deleted.
 
+Deleting a profile with `mcru profile remove` removes its references from every
+suite. The order of the remaining profiles is preserved.
+
 ### Change execution order
 ```bash
 mcru suite reorder <suite> <profile> <position>
@@ -147,9 +150,21 @@ mcru run all-mods --mapping mc-arch-recipes-split
 
 ### Error handling
 
-If a profile in the suite is missing, or its mapping preset cannot be loaded,
-that profile is **skipped with a warning** and the remaining profiles continue.
-Only if *no* profiles run successfully does the command exit with an error.
+Members that cannot run are **skipped with a reason**. This includes missing
+profiles, invalid sync paths, missing target folders, mapping lookup errors,
+and a decision to abort after backup creation fails. The remaining profiles
+continue. Skipped names and reasons appear in the terminal summary and saved
+suite report. A sync that starts but raises an error is reported separately as
+a failed profile, not as a skipped member.
+
+The report outcome is `success` when every member runs successfully, `partial`
+when at least one member runs but the suite is incomplete or has a partial sync
+result, and `failed` when no member runs or the run results indicate failure
+without retained changes. A suite with no configured profiles is also failed.
+
+Any `partial` or `failed` suite run exits with status `1`; only `success` exits
+with status `0`. This lets scripts distinguish a complete suite run from one
+that skipped or failed a member.
 
 ---
 
@@ -166,7 +181,8 @@ mcru Suite Report
 Suite    : all-mods
 Date     : 2026-02-26T12:00:00
 Mode     : LIVE
-Profiles : 3
+Outcome  : partial
+Profiles : 2
 ============================================================
 
 ------------------------------------------------------------
@@ -202,10 +218,15 @@ Updated  : 1
 Removed  : 1
 Unchanged: 42
 Errors   : 0
+
+============================================================
+Skipped profiles (1):
+  missing-profile: Profile not found
 ```
 
 The terminal output mirrors this structure: a banner for the suite, one
-colour-coded block per profile, and a `SUITE TOTALS` section at the end.
+colour-coded block per profile, skipped-member details when applicable, and a
+`SUITE TOTALS` section at the end.
 
 ---
 

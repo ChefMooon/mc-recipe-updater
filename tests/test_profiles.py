@@ -28,6 +28,7 @@ def temp_config_dir(monkeypatch, tmp_path):
     # Monkeypatch the config paths
     monkeypatch.setattr("config.CONFIG_DIR", config_dir)
     monkeypatch.setattr("config.CONFIG_FILE", config_file)
+    monkeypatch.setattr("config.SUITES_FILE", config_dir / "suites.json")
     
     yield config_dir, config_file
 
@@ -137,7 +138,7 @@ class TestProfileTags:
         )
         
         # Read the JSON file directly
-        config_dir, config_file = temp_config_dir
+        _, config_file = temp_config_dir
         data = json.loads(config_file.read_text())
         profile = data["profiles"][0]
         
@@ -224,6 +225,72 @@ class TestProfileTags:
         config_manager.update_profile_field("old-profile", "add-tag", "NewTag")
         profile = config_manager.get_profile("old-profile")
         assert "newtag" in profile["tags"]
+
+
+class TestProfileRemoval:
+    """Test profile deletion keeps persisted suite membership consistent."""
+
+    def test_remove_profile_from_all_suites_and_persist_order(self, config_manager, temp_config_dir):
+        config_dir, config_file = temp_config_dir
+        for name in ("first", "removed", "last"):
+            config_manager.add_profile(name, f"/{name}/source", f"/{name}/target", [])
+        config_manager.save_suite("primary", profiles=["first", "removed", "last"])
+        config_manager.save_suite("secondary", profiles=["removed", "last", "first"])
+
+        config_manager.remove_profile("removed")
+
+        saved_profiles = json.loads(config_file.read_text())["profiles"]
+        saved_suites = json.loads((config_dir / "suites.json").read_text())["suites"]
+        assert [profile["name"] for profile in saved_profiles] == ["first", "last"]
+        assert {suite["name"]: suite["profiles"] for suite in saved_suites} == {
+            "primary": ["first", "last"],
+            "secondary": ["last", "first"],
+        }
+
+        reloaded = ConfigManager()
+        assert [profile["name"] for profile in reloaded.list_profiles()] == ["first", "last"]
+        assert {suite["name"]: suite["profiles"] for suite in reloaded.list_suites()} == {
+            "primary": ["first", "last"],
+            "secondary": ["last", "first"],
+        }
+
+    def test_remove_unreferenced_profile(self, config_manager):
+        config_manager.add_profile("unreferenced", "/source", "/target", [])
+        config_manager.save_suite("untouched", profiles=["someone-else"])
+
+        config_manager.remove_profile("unreferenced")
+
+        assert config_manager.get_profile("unreferenced") is None
+        assert config_manager.get_suite("untouched")["profiles"] == ["someone-else"]
+
+    def test_remove_nonexistent_profile_does_not_change_registries(self, config_manager, temp_config_dir):
+        _, config_file = temp_config_dir
+        config_manager.add_profile("existing", "/source", "/target", [])
+        config_manager.save_suite("suite", profiles=["existing", "missing"])
+        original_profiles = config_file.read_text()
+        suites_file = config_file.parent / "suites.json"
+        original_suites = suites_file.read_text()
+
+        with pytest.raises(ValueError, match="Profile 'absent' not found"):
+            config_manager.remove_profile("absent")
+
+        assert config_file.read_text() == original_profiles
+        assert suites_file.read_text() == original_suites
+        assert config_manager.get_suite("suite")["profiles"] == ["existing", "missing"]
+
+    def test_cli_delete_does_not_report_success_when_suite_save_fails(self, config_manager, monkeypatch):
+        config_manager.add_profile("profile", "/source", "/target", [])
+        config_manager.save_suite("suite", profiles=["profile"])
+
+        def fail_save_suites(_manager):
+            raise OSError("suite registry is read-only")
+
+        monkeypatch.setattr(ConfigManager, "_save_suites", fail_save_suites)
+        result = CliRunner().invoke(cli, ["profile", "remove", "profile"])
+
+        assert result.exit_code != 0
+        assert isinstance(result.exception, OSError)
+        assert "Profile 'profile' removed." not in result.output
 
 
 class TestCliProfileTags:
@@ -743,4 +810,3 @@ class TestProfileDisplayFormatting:
         assert result.exit_code == 0
         # Profile should display without error
         assert "no-tags-profile" in result.output
-

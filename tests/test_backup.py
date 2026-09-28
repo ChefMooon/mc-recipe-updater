@@ -21,6 +21,7 @@ from pathlib import Path
 from datetime import datetime
 import cli as cli_module
 import backup as backup_module
+import reporter as reporter_module
 from backup import BackupManager, BackupEntry
 
 
@@ -363,7 +364,15 @@ class TestBackupCLIIntegration:
                 return "profile-report.txt"
 
         class _SuiteReporter:
-            def __init__(self, _name, _runs, dry_run=False, outcome="success"):
+            def __init__(
+                self,
+                _name,
+                _runs,
+                dry_run=False,
+                outcome="success",
+                skipped_members=None,
+                failed_members=None,
+            ):
                 outcome_calls.append(outcome)
 
             def print_summary(self):
@@ -388,6 +397,80 @@ class TestBackupCLIIntegration:
         target.mkdir()
         (target / "before.txt").write_text("before")
         return source, target
+
+    def _install_suite_run(
+        self,
+        monkeypatch,
+        suite_members,
+        profiles,
+        mapping_errors=(),
+        invalid_sync_paths=(),
+        failed_runs=(),
+    ):
+        run_calls = []
+
+        class _ConfigManager:
+            def get_profile(self, name):
+                profile = profiles.get(name)
+                return dict(profile) if profile else None
+
+            def get_suite(self, name):
+                return {"name": name, "profiles": suite_members} if name == "suite" else None
+
+            def get_mapping_preset(self, name):
+                if name in mapping_errors:
+                    raise FileNotFoundError(f"mapping '{name}' is missing")
+                return {}
+
+        class _GlobalConfig:
+            def get(self, key, default=None):
+                return {"backup.enabled": False, "backup.max_backups": 0}.get(key, default)
+
+        class _MCRU:
+            def __init__(self, config, dry_run=False):
+                self.profile_name = config["name"]
+                if self.profile_name in invalid_sync_paths:
+                    raise ValueError("injected invalid sync paths")
+
+            def run(self):
+                run_calls.append(self.profile_name)
+                if self.profile_name in failed_runs:
+                    raise OSError("injected sync failure")
+                return {
+                    "added": [],
+                    "updated": [],
+                    "removed": [],
+                    "unchanged": [],
+                    "dirs_added": [],
+                    "dirs_removed": [],
+                    "errors": [],
+                }
+
+        class _BackupManager:
+            def create_backup(self, *_args, **_kwargs):
+                raise AssertionError("backup was not expected")
+
+        monkeypatch.setattr(cli_module, "ConfigManager", _ConfigManager)
+        monkeypatch.setattr(cli_module, "GlobalConfig", _GlobalConfig)
+        monkeypatch.setattr(cli_module, "BackupManager", _BackupManager)
+        monkeypatch.setattr(cli_module, "MCRU", _MCRU)
+        return run_calls
+
+    @staticmethod
+    def _suite_profile(name, source, target, mapping_preset=None):
+        profile = {
+            "name": name,
+            "source": str(source),
+            "target": str(target),
+            "parsers": [],
+        }
+        if mapping_preset:
+            profile["mapping_preset"] = mapping_preset
+        return profile
+
+    @staticmethod
+    def _saved_suite_report(report_dir):
+        return next(report_dir.glob("suite_*.txt")).read_text(encoding="utf-8")
 
     def test_run_with_no_backup_flag_skips_backup(self, monkeypatch):
         """mcru run --no-backup should skip backup creation."""
@@ -486,6 +569,150 @@ class TestBackupCLIIntegration:
         assert "skipping" in result.output
         assert backup_calls == []
         assert (target / "before.txt").read_text() == "before"
+
+    def test_suite_mixed_run_and_skips_reports_details_and_fails(self, monkeypatch, tmp_path):
+        source, target = self._make_run_dirs(tmp_path)
+        report_dir = tmp_path / "reports"
+        monkeypatch.setattr(reporter_module, "REPORTS_DIR", report_dir)
+        profiles = {
+            "good": self._suite_profile("good", source, target),
+            "missing-target": self._suite_profile(
+                "missing-target", source, tmp_path / "missing-target"
+            ),
+        }
+        self._install_suite_run(
+            monkeypatch,
+            ["good", "missing-profile", "missing-target"],
+            profiles,
+        )
+
+        result = CliRunner().invoke(cli_module.cli, ["run", "suite"])
+
+        assert result.exit_code == 1
+        assert "Outcome  : partial" in result.output
+        assert "Skipped profiles (2)" in result.output
+        assert "missing-profile: Profile not found" in result.output
+        assert "missing-target: Target folder does not exist" in result.output
+        report = self._saved_suite_report(report_dir)
+        assert "Outcome  : partial" in report
+        assert "Skipped profiles (2):" in report
+        assert "missing-profile: Profile not found" in report
+        assert "missing-target: Target folder does not exist" in report
+
+    def test_all_skipped_suite_reports_reasons_and_fails(self, monkeypatch, tmp_path):
+        source, target = self._make_run_dirs(tmp_path)
+        report_dir = tmp_path / "reports"
+        monkeypatch.setattr(reporter_module, "REPORTS_DIR", report_dir)
+        profiles = {
+            "missing-target": self._suite_profile(
+                "missing-target", source, tmp_path / "missing-target"
+            ),
+            "mapping-error": self._suite_profile(
+                "mapping-error", source, target, mapping_preset="missing-mapping"
+            ),
+            "invalid-path": self._suite_profile("invalid-path", source, target),
+        }
+        self._install_suite_run(
+            monkeypatch,
+            ["missing-profile", "missing-target", "mapping-error", "invalid-path"],
+            profiles,
+            mapping_errors={"missing-mapping"},
+            invalid_sync_paths={"invalid-path"},
+        )
+
+        result = CliRunner().invoke(cli_module.cli, ["run", "suite"])
+
+        assert result.exit_code == 1
+        assert "Outcome  : failed" in result.output
+        assert "All profiles already in sync." not in result.output
+        assert "Skipped profiles (4)" in result.output
+        assert "Profile not found" in result.output
+        assert "Target folder does not exist" in result.output
+        assert "Mapping error: mapping 'missing-mapping' is missing" in result.output
+        assert "Invalid sync paths: injected invalid sync paths" in result.output
+        report = self._saved_suite_report(report_dir)
+        assert "Outcome  : failed" in report
+        assert "Profiles : 0" in report
+        assert "Skipped profiles (4):" in report
+        assert "mapping-error: Mapping error: mapping 'missing-mapping' is missing" in report
+        assert "invalid-path: Invalid sync paths: injected invalid sync paths" in report
+
+    def test_backup_abort_is_recorded_as_skipped_member(self, monkeypatch, tmp_path):
+        source, target = self._make_run_dirs(tmp_path)
+        report_dir = tmp_path / "reports"
+        monkeypatch.setattr(reporter_module, "REPORTS_DIR", report_dir)
+        profiles = {"profile": self._suite_profile("profile", source, target)}
+        run_calls = self._install_suite_run(monkeypatch, ["profile"], profiles)
+
+        class _BackupManager:
+            def create_backup(self, *_args, **_kwargs):
+                raise OSError("backup storage unavailable")
+
+        monkeypatch.setattr(cli_module, "BackupManager", _BackupManager)
+
+        result = CliRunner().invoke(cli_module.cli, ["run", "suite", "--backup"], input="n\n")
+
+        assert result.exit_code == 1
+        assert run_calls == []
+        assert "Outcome  : failed" in result.output
+        assert "Backup failed: backup storage unavailable; user chose not to continue" in result.output
+        report = self._saved_suite_report(report_dir)
+        assert "profile: Backup failed: backup storage unavailable; user chose not to continue" in report
+
+    def test_sync_exception_is_reported_as_failure_not_skip(self, monkeypatch, tmp_path):
+        source, target = self._make_run_dirs(tmp_path)
+        report_dir = tmp_path / "reports"
+        monkeypatch.setattr(reporter_module, "REPORTS_DIR", report_dir)
+        profiles = {
+            "good": self._suite_profile("good", source, target),
+            "broken": self._suite_profile("broken", source, target),
+        }
+        self._install_suite_run(
+            monkeypatch,
+            ["good", "broken"],
+            profiles,
+            failed_runs={"broken"},
+        )
+
+        result = CliRunner().invoke(cli_module.cli, ["run", "suite"])
+
+        assert result.exit_code == 1
+        assert "Outcome  : partial" in result.output
+        assert "Failed profiles (1)" in result.output
+        assert "Skipped profiles" not in result.output
+        assert "broken: injected sync failure" in result.output
+        report = self._saved_suite_report(report_dir)
+        assert "Failed profiles (1):" in report
+        assert "broken: injected sync failure" in report
+        assert "Skipped profiles" not in report
+
+    def test_successful_suite_keeps_zero_exit_code(self, monkeypatch, tmp_path):
+        source, target = self._make_run_dirs(tmp_path)
+        report_dir = tmp_path / "reports"
+        monkeypatch.setattr(reporter_module, "REPORTS_DIR", report_dir)
+        profiles = {"profile": self._suite_profile("profile", source, target)}
+        self._install_suite_run(monkeypatch, ["profile"], profiles)
+
+        result = CliRunner().invoke(cli_module.cli, ["run", "suite"])
+
+        assert result.exit_code == 0
+        assert "Outcome  : success" in result.output
+        report = self._saved_suite_report(report_dir)
+        assert "Outcome  : success" in report
+        assert "Skipped profiles" not in report
+
+    def test_empty_suite_reports_failed_and_returns_nonzero(self, monkeypatch, tmp_path):
+        report_dir = tmp_path / "reports"
+        monkeypatch.setattr(reporter_module, "REPORTS_DIR", report_dir)
+        self._install_suite_run(monkeypatch, [], {})
+
+        result = CliRunner().invoke(cli_module.cli, ["run", "suite"])
+
+        assert result.exit_code == 1
+        assert "Suite has no profiles" in result.output
+        assert "Outcome  : failed" in result.output
+        assert "All profiles already in sync." not in result.output
+        assert "Outcome  : failed" in self._saved_suite_report(report_dir)
 
     def test_quick_path_preflight_returns_nonzero_for_non_directory(self, tmp_path):
         source = tmp_path / "source"

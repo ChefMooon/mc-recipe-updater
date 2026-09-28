@@ -61,6 +61,14 @@ Accepts a **profile name** or a **suite name** — profile lookup happens first,
 
 For profile and suite runs, the source must be an existing directory and the target must already exist as a directory. The resolved source and target roots must not be identical or overlap (one inside the other). A suite skips profiles whose target does not exist.
 
+For suite runs, every skipped profile is listed with its reason in the terminal
+summary and saved report. Attempted sync failures are reported separately from
+skipped profiles. Outcomes are `success` when all members run successfully,
+`partial` when a member is skipped or the run is incomplete, and `failed` when
+no member runs or the sync results indicate failure without retained changes.
+`partial` and `failed` suite runs exit with status `1`; successful runs exit
+with status `0`. Empty suites are failed as well.
+
 See [target-changelog.md](target-changelog.md) for a full guide including entry format, suite behaviour, and tips.
 
 ```bash
@@ -261,6 +269,8 @@ Overwrites the saved profile (same options as `add`). The `created_at` timestamp
 ## Suite Commands
 
 See [suites.md](suites.md) for a full guide including schemas, report format, and error handling.
+When a profile is deleted with `mcru profile remove`, its references are also
+removed from every suite without changing the order of remaining profiles.
 
 ### Quick Reference
 
@@ -766,4 +776,3 @@ mcru config get backup.enabled
 mcru config get backup           # Show entire backup block
 mcru config get               # Show all settings
 ```
-

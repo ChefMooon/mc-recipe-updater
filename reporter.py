@@ -384,13 +384,25 @@ class SuiteReporter:
         One entry per successfully completed profile in the suite.
     dry_run : bool
         Whether the run was in dry-run mode.
+    skipped_members, failed_members : list of (profile_name, reason) tuples, optional
+        Members that could not be run or whose run failed before producing results.
     """
 
-    def __init__(self, suite_name: str, runs: list, dry_run: bool = False, outcome: str = "success"):
+    def __init__(
+        self,
+        suite_name: str,
+        runs: list,
+        dry_run: bool = False,
+        outcome: str = "success",
+        skipped_members: list[tuple[str, str]] | None = None,
+        failed_members: list[tuple[str, str]] | None = None,
+    ):
         self.suite_name = suite_name
         self.runs = runs
         self.dry_run = dry_run
         self.outcome = _validate_report_outcome(outcome)
+        self.skipped_members = list(skipped_members or [])
+        self.failed_members = list(failed_members or [])
         self.timestamp = datetime.now()
 
     # ── Internal helpers ─────────────────────────────────────
@@ -487,6 +499,16 @@ class SuiteReporter:
         for profile_name, config, results in self.runs:
             self._print_profile_block(profile_name, config, results)
 
+        if self.skipped_members:
+            click.echo(click.style(f"\n  Skipped profiles ({len(self.skipped_members)}):", fg="yellow", bold=True))
+            for profile_name, reason in self.skipped_members:
+                click.echo(f"     {profile_name}: {reason}")
+
+        if self.failed_members:
+            click.echo(click.style(f"\n  Failed profiles ({len(self.failed_members)}):", fg="bright_red", bold=True))
+            for profile_name, reason in self.failed_members:
+                click.echo(f"     {profile_name}: {reason}")
+
         # ── Totals ──
         t = self._totals()
         total_changes = t["added"] + t["updated"] + t["removed"] + t["dirs_added"] + t["dirs_removed"]
@@ -494,7 +516,7 @@ class SuiteReporter:
         click.echo(click.style("  SUITE TOTALS", bold=True))
         click.echo(f"{'═'*60}")
         if total_changes == 0:
-            if t["errors"]:
+            if t["errors"] or self.skipped_members or self.failed_members or self.outcome != "success":
                 click.echo("  No successful changes to report.")
             else:
                 click.echo(click.style("  ✅  All profiles already in sync.", fg="bright_green"))
@@ -569,6 +591,22 @@ class SuiteReporter:
                     *[f"  ! {path}: {message}" for path, message in rollback_errors],
                     "",
                 ]
+
+        if self.skipped_members:
+            lines += [
+                "=" * 60,
+                f"Skipped profiles ({len(self.skipped_members)}):",
+                *[f"  {profile_name}: {reason}" for profile_name, reason in self.skipped_members],
+                "",
+            ]
+
+        if self.failed_members:
+            lines += [
+                "=" * 60,
+                f"Failed profiles ({len(self.failed_members)}):",
+                *[f"  {profile_name}: {reason}" for profile_name, reason in self.failed_members],
+                "",
+            ]
 
         t = self._totals()
         lines += [
