@@ -159,8 +159,8 @@ mcru config get backup  # Show the entire backup config block
 **Scenario 2: With Pinned Backups**
 - Config: `max_backups = 10`
 - Current backups: 12 (2 pinned, 10 unpinned)
-- Action: Only pinned backups are kept, then oldest 2 unpinned are deleted → 10 unpinned + 2 pinned = 12 remain (no deletion because only 10 unpinned)
-- Correction: Actually, only the 10 newest unpinned are kept, pinned ones are never deleted. So: 10 unpinned + 2 pinned = 12 remain. If there were 15 total (3 pinned, 12 unpinned), then 10 unpinned + 3 pinned = 13 remain.
+- Action: No unpinned backups are deleted because the unpinned count is already at the limit → 10 unpinned + 2 pinned = 12 remain.
+- If there are 15 backups (3 pinned, 12 unpinned), rotation deletes the 2 oldest unpinned backups → 10 unpinned + 3 pinned = 13 remain.
 
 ### Failed Runs
 
